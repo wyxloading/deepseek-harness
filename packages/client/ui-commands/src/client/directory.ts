@@ -27,6 +27,10 @@ class Entry {
   commands: readonly CommandDescriptor[] = []
   /** Bumped at each pull start; only the latest pull may publish its outcome. */
   epoch = 0
+  /** Whether a pull is in flight for this key; the collapse gate for invalidations. */
+  inFlight = false
+  /** An invalidation landed mid-flight: one repull follows the settling pull. */
+  dirty = false
   lastError: unknown
   waiters: Array<() => void> = []
 }
@@ -100,12 +104,19 @@ export class CommandDirectory {
   /**
    * Start one pull for one session. Publishes ready/failed only while it is
    * still the key's latest pull (epoch guard); a ready snapshot is not
-   * demoted while the pull flies.
+   * demoted while the pull flies. A pull already in flight absorbs later
+   * invalidations into one follow-up pull, so a change burst costs at most two
+   * requests per key however many events it carries.
    * @param sessionId - session key.
    * @returns settled when this pull's outcome is published or discarded.
    */
   async refresh(sessionId: SessionId): Promise<void> {
     const entry = this.entry(sessionId)
+    if (entry.inFlight) {
+      entry.dirty = true
+      return
+    }
+    entry.inFlight = true
     const epoch = ++entry.epoch
     if (entry.state !== 'ready') entry.state = 'pending'
     try {
@@ -120,7 +131,12 @@ export class CommandDirectory {
       entry.state = 'failed'
       entry.lastError = error
     } finally {
+      entry.inFlight = false
       if (epoch === entry.epoch) notifyWaiters(entry)
+      if (entry.dirty) {
+        entry.dirty = false
+        void this.refresh(sessionId)
+      }
     }
   }
 

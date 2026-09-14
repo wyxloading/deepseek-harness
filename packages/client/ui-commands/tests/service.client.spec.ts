@@ -1125,6 +1125,27 @@ describe('directory invalidation events', () => {
     expect(source.matchSpace!(proj('s1'), '/goal')).toBeUndefined()
   })
 
+  it('collapses a change burst into one follow-up pull', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const { warm, remote, listCalls } = await bench({
+      commands: async () => {
+        await gate
+        return { commands: S1_CMDS }
+      },
+    })
+    void warm(proj('s1'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(listCalls).toHaveLength(1)
+
+    for (let index = 0; index < 20; index += 1) remote.emit('commands/change', [])
+    expect(listCalls).toHaveLength(1)
+
+    release?.()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(listCalls).toHaveLength(2)
+  })
+
   it('agent-preset/selected drops and repulls the recomposed session while leaving others served', async () => {
     const rounds = new Map<SessionId, number>()
     const { source, warm, remote } = await bench({
