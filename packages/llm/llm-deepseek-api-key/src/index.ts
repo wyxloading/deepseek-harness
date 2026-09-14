@@ -4,7 +4,8 @@ import { APP_IDENTITY, assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import {
-  catalogModelInfo, ModelListingCache, refuseListedModel, registerDeepSeekProvider, requestModelListing, resolveListedCatalog,
+  catalogModelInfo, discoverDeepSeekModels, ModelListingCache, refuseListedModel, registerDeepSeekProvider,
+  requestModelListing, resolveListedCatalog,
 } from '@deepseek-ai/dsh-llm-deepseek'
 import type { CatalogRefusal, DeepSeekCatalogModel, ListingView, ModelListing } from '@deepseek-ai/dsh-llm-deepseek'
 import { Config, plainOptions, resolveAdapterOptions } from './config.ts'
@@ -30,6 +31,7 @@ interface OfficialConnection extends ResolvedDeepSeekOptions {
 export function apply(ctx: Context, config: Config): void {
   const options = () => resolveAdapterOptions(plainOptions(config), launchEnvironmentOf(ctx))
   options()
+  const settingsNs = ctx.fiber.entry?.options.id ?? name
   const resolveApiKey = async (connection: ResolvedDeepSeekOptions): Promise<string> => {
     const ref = connection.apiKeyEnv
     const credentials = ctx.get('credentials')
@@ -80,7 +82,7 @@ export function apply(ctx: Context, config: Config): void {
     return { ...connection, models: catalog.resolution, offered: catalog.offered, refusals: catalog.refusals }
   }
   ctx.llm.registerConfigurableProviders([
-    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: ctx.fiber.entry?.options.id ?? name, settingsPath: [] },
+    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs, settingsPath: [] },
   ])
   registerDeepSeekProvider<OfficialConnection>(ctx, PROVIDER, {
     providerName: 'DeepSeek',
@@ -113,6 +115,21 @@ export function apply(ctx: Context, config: Config): void {
       return view.authenticated ? connectionOf(connection, view).offered.map(model => catalogModelInfo(provider, model)) : []
     },
   })
+  // Discovery serves the whole namespace rather than one route: a configuration
+  // surface asks about the endpoint this plugin already resolves, and a draft
+  // the user is still editing overrides it in the request. The reply is
+  // candidate metadata the surface offers for adoption; nothing writes settings
+  // from here. A deployment that supplies no credential probes without one,
+  // because a gateway on a private network may answer an open listing.
+  ctx.llm.registerModelDiscovery(settingsNs, (request, signal) => discoverDeepSeekModels(
+    {
+      baseURL: request.baseURL ?? options().baseURL,
+      resolveApiKey: () => request.apiKey === undefined
+        ? presentApiKey(options())
+        : Promise.resolve(request.apiKey),
+    },
+    signal,
+  ))
   // Starting or stopping to follow the listing discards it, so restoring the built-in
   // catalog after a customization reloads the listing on the next access.
   let following = options().listing !== undefined

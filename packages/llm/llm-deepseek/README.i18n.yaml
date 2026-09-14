@@ -35,6 +35,9 @@
 /deepseek-ai-dsh-llm-deepseek/use-this-package/dynamic-configuration:
   en: 49290fc5647136b4
   zh: 96fa9ce0f9e83c13
+/deepseek-ai-dsh-llm-deepseek/use-this-package/endpoint-model-discovery:
+  en: 87b4d94d00fa0200
+  zh: c35ec753526fe2d1
 /deepseek-ai-dsh-llm-deepseek/use-this-package/provider-specific-request-fields:
   en: f13f24b504dcfb50
   zh: 69b0ed9e2adf3394
