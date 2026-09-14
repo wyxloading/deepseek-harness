@@ -25,8 +25,12 @@ export type FetchCommands = (sessionId: SessionId) => Promise<readonly CommandDe
 class Entry {
   state: DirectoryStatus = 'cold'
   commands: readonly CommandDescriptor[] = []
-  /** Bumped at each pull start; only the latest pull may publish its outcome. */
+  /** Bumped at each pull start and each reset; only the latest generation may publish. */
   epoch = 0
+  /** Whether a pull is in flight for this key; the collapse gate for invalidations. */
+  inFlight = false
+  /** An invalidation landed mid-flight: one repull follows the settling pull. */
+  dirty = false
   lastError: unknown
   waiters: Array<() => void> = []
 }
@@ -69,6 +73,10 @@ export class CommandDirectory {
    */
   resetSession(sessionId: SessionId): void {
     const entry = this.entry(sessionId)
+    // A reset supersedes a pull already in flight: that outcome describes the
+    // composition being abandoned, so the epoch guard drops it and the reset's
+    // own pull publishes.
+    entry.epoch += 1
     entry.state = 'cold'
     entry.commands = []
     entry.lastError = undefined
@@ -81,6 +89,8 @@ export class CommandDirectory {
    */
   resetConnected(): void {
     for (const [key, entry] of this.entries) {
+      // Same supersession as resetSession: the flying pull predates this generation.
+      entry.epoch += 1
       entry.state = 'cold'
       entry.commands = []
       void this.refresh(key)
@@ -99,13 +109,20 @@ export class CommandDirectory {
 
   /**
    * Start one pull for one session. Publishes ready/failed only while it is
-   * still the key's latest pull (epoch guard); a ready snapshot is not
-   * demoted while the pull flies.
+   * still the key's latest generation (epoch guard, which a reset advances); a
+   * ready snapshot is not demoted while the pull flies. A pull already in flight absorbs later
+   * invalidations into one follow-up pull, so a change burst costs at most two
+   * requests per key however many events it carries.
    * @param sessionId - session key.
    * @returns settled when this pull's outcome is published or discarded.
    */
   async refresh(sessionId: SessionId): Promise<void> {
     const entry = this.entry(sessionId)
+    if (entry.inFlight) {
+      entry.dirty = true
+      return
+    }
+    entry.inFlight = true
     const epoch = ++entry.epoch
     if (entry.state !== 'ready') entry.state = 'pending'
     try {
@@ -120,7 +137,12 @@ export class CommandDirectory {
       entry.state = 'failed'
       entry.lastError = error
     } finally {
+      entry.inFlight = false
       if (epoch === entry.epoch) notifyWaiters(entry)
+      if (entry.dirty) {
+        entry.dirty = false
+        void this.refresh(sessionId)
+      }
     }
   }
 

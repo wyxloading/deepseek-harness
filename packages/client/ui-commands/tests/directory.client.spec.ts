@@ -118,14 +118,15 @@ describe('status and resolve (per key)', () => {
 })
 
 describe('epoch guard (per key)', () => {
-  it('a superseded pull cannot overwrite the newer one (old resolves after new)', async () => {
+  it('a pull a reset superseded cannot overwrite the newer one (old resolves after new)', async () => {
     const { dir, pull } = bench()
     const first = dir.refresh(S1)
-    const second = dir.refresh(S1)
-    pull(S1, 1).resolve(CMDS)
-    await second
-    expect(dir.resolve(S1, 'plan')).toBeDefined()
+    // A reset advances the generation, so the flying pull is dropped and the
+    // reset's own pull (started once that one settles) becomes this key's latest.
+    dir.resetSession(S1)
     pull(S1, 0).resolve([{ name: 'stale', description: 'old world' }])
+    await Promise.resolve()
+    pull(S1, 1).resolve(CMDS)
     await first
     expect(dir.resolve(S1, 'stale')).toBeUndefined()
     expect(dir.resolve(S1, 'plan')).toBeDefined()
@@ -134,23 +135,24 @@ describe('epoch guard (per key)', () => {
   it('a superseded failure cannot demote the newer success', async () => {
     const { dir, pull } = bench()
     const first = dir.refresh(S1)
-    const second = dir.refresh(S1)
-    pull(S1, 1).resolve(CMDS)
-    await second
+    dir.resetSession(S1)
     pull(S1, 0).reject(new Error('late failure'))
+    await Promise.resolve()
+    pull(S1, 1).resolve(CMDS)
     await first
     expect(dir.status(S1)).toBe('ready')
     expect(dir.resolve(S1, 'plan')).toBeDefined()
   })
 
-  it('epochs are per key: one session supersede leaves another session epoch alone', async () => {
+  it('epochs are per key: one session reset leaves another session epoch alone', async () => {
     const { dir, pull } = bench()
     const one = dir.refresh(S1)
     void dir.refresh(S2)
-    void dir.refresh(S2) // supersedes the s2 pull only
+    dir.resetSession(S2) // supersedes the s2 pull only
     pull(S1, 0).resolve(CMDS)
     await one
     expect(dir.status(S1)).toBe('ready')
+    expect(dir.resolve(S1, 'plan')).toBeDefined()
   })
 })
 
@@ -332,8 +334,9 @@ describe('ensureReady (per key)', () => {
   it('keeps waiting across a superseded pull and settles on the winner', async () => {
     const { dir, pull } = bench()
     const wait = dir.ensureReady(S1, signal())
-    void dir.refresh(S1) // supersedes pull #0 with pull #1
+    dir.resetSession(S1) // advances the generation, so pull #0 is dropped for pull #1
     pull(S1, 0).resolve([{ name: 'stale', description: 'loser' }])
+    await Promise.resolve()
     pull(S1, 1).resolve(CMDS)
     await expect(wait).resolves.toEqual(CMDS)
   })
