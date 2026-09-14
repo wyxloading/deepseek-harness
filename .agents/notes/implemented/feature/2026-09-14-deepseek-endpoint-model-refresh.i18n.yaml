@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-14-deepseek-endpoint-model-refresh.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-14-deepseek-endpoint-model-refresh.md
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint:
+  en: 12c19eda38ac7645
+  zh: fd2aaef387d00302
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint/problem:
+  en: 3f907e7d49351984
+  zh: b39950d4baea987d
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint/decision:
+  en: 8bd8e7e5d33d2878
+  zh: 42193f7da4d9c723
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint/alternatives-considered:
+  en: 8efdd31d85c7c3d9
+  zh: ef017d8b6664c041
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint/consequences:
+  en: b0464293eae75edf
+  zh: a3070f917d57471e
+/agent-note-deepseek-routes-refresh-their-model-catalog-from-the-endpoint/testing:
+  en: 1728ed4e66b4ac63
+  zh: 3b9f0feaea37ef18

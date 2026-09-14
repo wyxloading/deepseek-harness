@@ -23,6 +23,8 @@ Status: implemented
 
 `dsh-llm-pi-ai` 会应用[`dsh-llm-pi-ai` README](../../../../packages/llm/llm-pi-ai/README.zh.md)记录的列表路由、认证、URL 归一化、响应格式与元数据规则。Profile 解析会拒绝 Fetch 无法表示的名称与值，因此格式错误的部署 header 会在询问前以配置错误报告。已配置的 profile headers 最先装入；固定协议 headers、键入或已存的协议凭据以及 Harness attribution 随后分别以大小写不敏感方式赢得相应冲突。没有文档化列表约定的协议会以 `DISCOVERY_UNSUPPORTED` 回答，让界面回退到手工填写，而不是把猜错的响应字段报成一个空提供方。`baseURL` 按前缀而非待解析 URL 处理，因此部署路径段会保持不变。回复在四兆字节上限下读取，且上限落在实际收到的字节上——端点是用户自己填的 URL，因此会先看声明的 `content-length` 作为善意提示，但绝不把它当作边界；这与 `dsh-web-fetch` 面对自己的调用方提供 URL 时所用的两段式模式一致。
 
+`dsh-llm-deepseek` 为它自己的 namespace 注册同一 seam，用 DeepSeek 线上方言所提供的 OpenAI 兼容列表询问其路由解析到的端点（[note](../feature/2026-09-14-deepseek-endpoint-model-refresh.zh.md)）。
+
 ### 为什么不用 pi-ai 自己的 refresh 机制
 
 pi-ai 提供了 `createProvider({ fetchModels })` 加上 `Models.refresh()` 与 `ModelsStore`，而下层本来就在构造 pi-ai `Provider` 对象。把询问接到它们上面，意味着每问一次就要构造一个用完即弃的提供方与集合，而那个 store 的全部目的——跨运行持久化 catalog——恰恰与「`settings.yaml` 拥有 catalog」的决定相抵触。而且它什么也换不来：**没有任何一个 pi-ai 内置提供方实现了 `fetchModels`**，因此 HTTP 调用及其响应解析无论如何都是本包的代码。直接 fetch 才如实说出正在发生的事。路由已存的凭据由本插件自己那套逐请求解析器取出，且只在真正要联网的那条分支上进行，因此 catalog 路由作答时既不触碰凭据，也不会因为一把这次询问根本用不上的密钥而失败。

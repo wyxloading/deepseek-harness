@@ -105,6 +105,10 @@ Files mode bounds retained request versions by `maxRequestFilesBytes` and `maxIm
 
 Connection options are captured from volatile Config references once per operation. Config validation rejects invalid candidates before form persistence. Credentials resolve from the same snapshot as the endpoint, image and Files policies, and idle budget. Attachment services resolve at request time.
 
+### Endpoint model discovery
+
+The plugin registers model discovery for its settings namespace, so a configuration surface can ask the endpoint this route resolves which models it serves before anything is stored. The interrogation issues `GET {baseURL}/models` with the route's resolved credential when the deployment supplies one; an absent credential probes unauthenticated, because an endpoint on a private network may answer an open listing. It reads the OpenAI-compatible listing the DeepSeek dialect uses — a `data` array, or the enriched `models` map some gateways serve — and returns candidates the caller may adopt. Nothing in this path reads or writes settings, and a stored catalog still decides what the route serves.
+
 ### Provider-specific request fields
 
 When `ctx.deepseekLlmApiExtensions` is present, the adapter prepares its registered top-level fields from the exact serialized base request before `fetch`. Preparation or field collisions fail before HTTP; after a 2xx response, the adapter accepts every captured contribution before consuming SSE. Transport and non-2xx failures do not accept them. When the base request with its extension fields fails to serialize, the adapter sends the base request alone, skips acceptance so contributors resend their state later, and logs a warning naming the omitted fields. Shipped compositions use this for the default-on incremental `dsh_session_log` field and the default-on active `dsh_plugin_packages` inventory; both stay outside model input.

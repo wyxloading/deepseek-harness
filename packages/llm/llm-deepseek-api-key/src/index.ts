@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { registerDeepSeekProvider, catalogModelInfo } from '@deepseek-ai/dsh-llm-deepseek'
+import { registerDeepSeekProvider, catalogModelInfo, discoverDeepSeekModels } from '@deepseek-ai/dsh-llm-deepseek'
 import { Config, plainOptions, resolveAdapterOptions } from './config.ts'
 import type { ResolvedDeepSeekOptions } from './config.ts'
 
@@ -17,6 +17,7 @@ const PROVIDER = 'deepseek-official'
 export function apply(ctx: Context, config: Config): void {
   const options = () => resolveAdapterOptions(plainOptions(config), launchEnvironmentOf(ctx))
   options()
+  const settingsNs = ctx.fiber.entry?.options.id ?? name
   const resolveApiKey = async (connection: ResolvedDeepSeekOptions): Promise<string> => {
     const ref = connection.apiKeyEnv
     const credentials = ctx.get('credentials')
@@ -33,8 +34,22 @@ export function apply(ctx: Context, config: Config): void {
       'MISSING_CREDENTIAL',
     )
   }
+  /**
+   * Resolve the credential a discovery probe sends, or undefined when the
+   * deployment supplies none: an endpoint on a private network may answer an
+   * unauthenticated listing, and refusing before asking would hide that.
+   * @param connection - the resolved facts of the route being interrogated.
+   * @returns the credential to send, or undefined to probe without one.
+   */
+  const resolveDiscoveryKey = async (connection: ResolvedDeepSeekOptions): Promise<string | undefined> => {
+    const ref = connection.apiKeyEnv
+    const credentials = ctx.get('credentials')
+    const stored = credentials === undefined ? undefined : (await credentials.resolve(ref))?.value
+    const ambient = stored ?? launchEnvironmentOf(ctx).get(ref)?.value
+    return ambient === undefined || ambient.length === 0 ? undefined : ambient
+  }
   ctx.llm.registerConfigurableProviders([
-    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: ctx.fiber.entry?.options.id ?? name, settingsPath: [] },
+    { provider: PROVIDER, displayName: 'DeepSeek', settingsNs, settingsPath: [] },
   ])
   registerDeepSeekProvider(ctx, PROVIDER, {
     options, providerName: 'DeepSeek',
@@ -44,4 +59,18 @@ export function apply(ctx: Context, config: Config): void {
       return Promise.resolve(connection.models.map(model => catalogModelInfo(provider, model)))
     },
   })
+  // Discovery serves the whole namespace rather than one route: a configuration
+  // surface asks about the endpoint this plugin already resolves, and a draft
+  // the user is still editing overrides it in the request. The reply is
+  // candidate metadata the surface offers for adoption; nothing writes settings
+  // from here.
+  ctx.llm.registerModelDiscovery(settingsNs, (request, signal) => discoverDeepSeekModels(
+    {
+      baseURL: request.baseURL ?? options().baseURL,
+      resolveApiKey: () => request.apiKey === undefined
+        ? resolveDiscoveryKey(options())
+        : Promise.resolve(request.apiKey),
+    },
+    signal,
+  ))
 }

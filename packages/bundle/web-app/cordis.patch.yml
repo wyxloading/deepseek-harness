@@ -294,6 +294,10 @@
     - id: ui-settings-models
       name: '@deepseek-ai/dsh-client-ui-settings-models'
 
+    # The Models page's endpoint refresh card for the DeepSeek namespace.
+    - id: ui-settings-models-refresh
+      name: '@deepseek-ai/dsh-client-ui-settings-models-refresh'
+
     # Plugin management: the sidebar Plugins page installs, enables, disables,
     # and removes the profile's bundles through the `pluginManager` Remote.
     # Without a profile-backed Host it reports itself unavailable.
