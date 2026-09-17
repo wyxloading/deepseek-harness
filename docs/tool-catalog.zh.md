@@ -602,7 +602,7 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
 
 ### `bash`
 
-执行 bash 命令（`bash -c`）并返回 stdout/stderr。每次调用都在新 shell 中运行；请传入 `workdir`，不要使用 `cd`。托管的 `$DSH_*` 变量公开当前 harness 环境信息。较长的输出会截断，只保留尾部；如可用，完整输出会保存到文件并报告其路径。命令可能在文件沙箱中运行；被阻止的文件操作报告为 `[sandbox: file access denied under <mode> mode]`，这是策略拒绝：请勿换一种方式重试。
+执行 bash 命令（`bash -c`）并返回 stdout/stderr。每次调用都在新 shell 中运行；请传入 `workdir`，不要使用 `cd`。托管的 `$DSH_*` 变量公开当前 harness 环境信息。较长的输出会截断，只保留尾部；如可用，完整输出会保存到文件并报告其路径。设置 `detached: true` 可在 harness 管理的进程范围之外启动命令：其子进程会在此命令与后续调用之后继续存活，且不会被 harness 终止或跟踪，因此需要你自行用后续命令停止它们。在 confining sandbox 生效期间不可使用 detached。命令可能在文件沙箱中运行；被阻止的文件操作报告为 `[sandbox: file access denied under <mode> mode]`，这是策略拒绝：请勿换一种方式重试。
 
 ```json
 {
@@ -623,6 +623,10 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
     "workdir": {
       "type": "string",
       "description": "Working directory for this command. Defaults to the session workspace; a relative path is resolved against it."
+    },
+    "detached": {
+      "type": "boolean",
+      "description": "Start the command outside the harness-managed process range: its child processes survive this command and later calls and are never terminated by the harness. You own stopping them. Unavailable under a confining sandbox."
     },
     "run_in_background": {
       "type": "boolean",

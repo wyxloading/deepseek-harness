@@ -410,7 +410,7 @@ describe('bash tool', () => {
     expect(schemas.map(schema => schema.name)).toEqual(['bash'])
     const bashSchema = schemas[0]!
     expect(Object.keys(bashSchema.parameters.properties as Record<string, unknown>))
-      .toEqual(['command', 'description', 'timeoutMs', 'workdir'])
+      .toEqual(['command', 'description', 'timeoutMs', 'workdir', 'detached'])
     expect(JSON.stringify(bashSchema.parameters)).not.toContain('job_output')
     expect(JSON.stringify(bashSchema.parameters)).toContain('kills the command on expiry')
   })
@@ -438,6 +438,7 @@ describe('bash tool', () => {
       'deployment:persona-suffix',
     ])
     expect(section?.text).toContain('[exit code: N]')
+    expect(section?.text).toContain('Set `detached: true` only when')
   })
 
   it('unregisters everything when the plugin fiber is disposed (HMR safety)', async () => {
@@ -657,7 +658,7 @@ describe('background execution through the job runtime', () => {
 
     const schema = ctx.tools.schemas().find(s => s.name === 'bash')!
     expect(Object.keys(schema.parameters.properties as Record<string, unknown>))
-      .toEqual(['command', 'description', 'timeoutMs', 'workdir'])
+      .toEqual(['command', 'description', 'timeoutMs', 'workdir', 'detached'])
     expect(schema.description).not.toContain('run_in_background')
     // The registry-held definition agrees (schema and capability never disagree).
     const parameters = ctx.tools.get('bash')!.parameters as { properties: Record<string, unknown> }

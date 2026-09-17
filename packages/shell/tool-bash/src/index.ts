@@ -65,6 +65,7 @@ interface BashToolArgs {
   timeoutMs?: number
   workdir?: string
   run_in_background?: boolean
+  detached?: boolean
   sandbox_permissions?: string
   /** Optional for an omitted or repeated effective mode; widening requires a non-empty reason. */
   justification?: string
@@ -92,6 +93,7 @@ function bashDescription(): string {
     + 'Each call runs in a fresh shell; pass `workdir` instead of using `cd`. '
     + `Managed \`$${DSH_ENV_PREFIX}*\` variables expose current harness environment facts. `
     + 'Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. '
+    + 'Set `detached: true` to start the command outside the harness-managed process range: its child processes survive the command and later tool calls and are never terminated or tracked by the harness, so stop them yourself with a later command. Detached is unavailable while a confining sandbox is active. '
     + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`, a policy denial: do not retry another way.'
 }
 
@@ -257,7 +259,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.systemPrompt.section({
     name: 'tool:bash',
     order: ctx.systemPrompt.getSectionOrder('TOOL_BASH'),
-    text: 'Check the [exit code: N] marker on every bash result; investigate failures before moving on.',
+    text: 'Check the [exit code: N] marker on every bash result; investigate failures before moving on. '
+      + 'By default the harness stops a command\'s processes when the call ends: leave `detached` off for ordinary commands and background jobs. '
+      + 'Set `detached: true` only when one command starts a long-lived service (a server, daemon, or environment) that you intend to stop with a later command, because its child processes then outlive every later call until you stop them.',
   })
 
   /**
@@ -387,6 +391,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             : 'Timeout in milliseconds. The executor applies its configured default and cap, and kills the command on expiry.',
         },
         workdir: { type: 'string', description: 'Working directory for this command. Defaults to the session workspace; a relative path is resolved against it.' },
+        detached: { type: 'boolean' as const, description: 'Start the command outside the harness-managed process range: its child processes survive this command and later calls and are never terminated by the harness. You own stopping them. Unavailable under a confining sandbox.' },
         ...background ? {
           run_in_background: { type: 'boolean' as const, description: 'Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies.' },
         } : {},
@@ -485,12 +490,19 @@ export function apply(ctx: Context, config: Config = {}): void {
         const policy = approvedMode === undefined
           ? standingPolicy
           : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        // A confining sandbox wraps the command in its own runner, whose range
+        // owns the descendants regardless of the subprocess containment choice.
+        // Refuse rather than promise a detachment the sandbox will not honor.
+        if (args.detached === true && policy !== undefined && policy.mode !== 'danger-full-access') {
+          throw new Error(`detached is unavailable under sandbox mode ${policy.mode}: a confining sandbox owns the command's process range`)
+        }
         const workdir = resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
         const dshEnv = ctx.shellEnv.collect(exec)
         const request: ShellExecRequest = {
           command: args.command,
           ...workdir !== undefined ? { workdir } : {},
           ...args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {},
+          ...args.detached === true ? { detached: true } : {},
           dshEnv,
           ...policy !== undefined ? { sandboxPolicy: policy } : {},
         }

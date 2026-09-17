@@ -181,18 +181,24 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
 
   spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     validateSubprocessSpec(spec)
-    const env = targetEnvironment(spec)
-    const containmentMode = this.selectContainmentMode('ordinary')
     let handle: LocalSubprocessHandle
     const internals: SpawnInternals = { ...this.internals, onSpillFailure: this.reportSpillFailure }
-    if (containmentMode === 'fallback') {
+    if (spec.containment === 'detached') {
+      // Detached bypasses every provider-owned range so descendants survive the
+      // direct command and this handle; the opting-in caller owns their cleanup.
       handle = spawnSubprocess(spec, internals)
     } else {
-      const binding = prepareManagedProcessBinding(internals)
-      const launch = containmentMode === 'linux-scope'
-        ? launchLinuxScope(spec, env)
-        : launchWindowsJob(spec, env)
-      handle = bindManagedProcess(spec, launch, binding)
+      const env = targetEnvironment(spec)
+      const containmentMode = this.selectContainmentMode('ordinary')
+      if (containmentMode === 'fallback') {
+        handle = spawnSubprocess(spec, internals)
+      } else {
+        const binding = prepareManagedProcessBinding(internals)
+        const launch = containmentMode === 'linux-scope'
+          ? launchLinuxScope(spec, env)
+          : launchWindowsJob(spec, env)
+        handle = bindManagedProcess(spec, launch, binding)
+      }
     }
     this.live.add(handle)
     const control = handle.control

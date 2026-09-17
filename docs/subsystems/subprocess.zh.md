@@ -107,6 +107,17 @@ interface SubprocessSpawnSpec {
   /** Per-stream stdio dispositions. */
   stdio: SubprocessStdio
   /**
+   * Process-range policy for this spawn. `'managed'` (also the meaning when
+   * omitted) selects the provider's contained range, so descendants stay
+   * observable: {@link SubprocessHandle.terminate} signals them and
+   * {@link SubprocessHandle.waitForExit} does not resolve until that range is
+   * empty. `'detached'` starts the target outside any provider-owned range —
+   * only the direct process is observed or signalled — so descendants that
+   * escape it survive direct-command exit and the handle's own termination;
+   * the caller that opts in owns cleaning up those descendants.
+   */
+  containment?: 'managed' | 'detached' | undefined
+  /**
    * Positive finite grace period in milliseconds, no greater than
    * `MAX_TIMER_DELAY_MS`, available to the provider's termination procedure
    * and used for draining still-open collected pipes after the process exits
@@ -275,6 +286,7 @@ Implementations must honor these semantics:
 - Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another's output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.
 - SubprocessHandle.terminate (and the spec's abort signal) starts the provider's documented procedure against its managed range. SubprocessHandle.waitForExit observes that same range so a consumer-owned teardown ladder can hold each tier on real quiescence; each provider documents its signalling and observability limits.
 - Disposal of the service terminates all still-running managed processes and awaits their exit.
+- A spec with `containment: 'detached'` starts the target outside the provider's managed range: `terminate()` and `waitForExit()` cover only the direct process, and disposal does not reach descendants. The opt-in caller owns cleaning them up.
 - spawnTerminal owns terminal allocation, text transport, foreground groups, signalling, and whole-session quiescence behind one awaited termination method; readiness and persistent-shell policy stay in the PTY consumer. Its output stream ends after queued terminal output when the top-level process exits.
 
 ```ts cordis-catalog
@@ -299,9 +311,10 @@ abstract resolveExecutable( command: string, env?: Readonly<Record<string, strin
 abstract terminalEnvironment(signal?: AbortSignal): Promise<SubprocessTerminalEnvironment>
 
 /**
- * Start one managed child process from a fully-specified spec; this seam
- * applies no defaults.
- * @param spec - argv, directory, stdio dispositions, grace, cancellation, and environment.
+ * Start one child process from a fully-specified spec; this seam applies no
+ * defaults. The spec's `containment` selects the range: the default managed
+ * range, or `'detached'` for a direct-process-only handle.
+ * @param spec - argv, directory, stdio dispositions, containment, grace, cancellation, and environment.
  * @returns the live process handle (streams/readers, signalling, outcome promise).
  * @throws synchronously when pre-aborted or when argv, cwd, environment, or grace is invalid before handle creation.
  */

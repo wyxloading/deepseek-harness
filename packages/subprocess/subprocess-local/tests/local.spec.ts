@@ -916,6 +916,45 @@ describe('LocalSubprocessRuntime', () => {
     }
   })
 
+  it('routes detached spawns past every native containment probe', async () => {
+    const probeLinuxNative = vi.fn(() => true)
+    const probeLinuxManager = vi.fn(() => true)
+    const launchLinuxScope = vi.fn()
+    const launchWindowsJob = vi.fn()
+    const probeWindowsJob = vi.fn(() => true)
+
+    vi.resetModules()
+    mockWin32ForIsolatedRuntime()
+    vi.doMock('../src/linux-scope.ts', () => ({
+      launchLinuxScope,
+      prepareLinuxTerminalScope: vi.fn(),
+      probeLinuxManager,
+      probeLinuxNative,
+    }))
+    vi.doMock('../src/windows-job.ts', () => ({ launchWindowsJob, probeWindowsJob }))
+    const fibers: Array<{ dispose(): Promise<void> }> = []
+    try {
+      const { default: IsolatedLocalSubprocessRuntime } = await import('../src/index.ts')
+      const ctx = new Context()
+      const fiber = await ctx.plugin(IsolatedLocalSubprocessRuntime)
+      fibers.push(fiber)
+      const runtime = ctx.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>
+      runtime.internals = { platform: 'linux' }
+      const handle = runtime.spawn({ ...spec('true'), containment: 'detached' })
+      await handle.done
+      expect(probeLinuxNative).not.toHaveBeenCalled()
+      expect(probeLinuxManager).not.toHaveBeenCalled()
+      expect(launchLinuxScope).not.toHaveBeenCalled()
+      expect(launchWindowsJob).not.toHaveBeenCalled()
+    } finally {
+      for (const fiber of fibers.reverse()) await fiber.dispose()
+      vi.doUnmock('../src/linux-scope.ts')
+      vi.doUnmock('../src/windows-job.ts')
+      unmockWin32ForIsolatedRuntime()
+      vi.resetModules()
+    }
+  })
+
   it('retries failed Linux deep probes, caches the first success, and rechecks the manager', async () => {
     const probeLinuxNative = vi.fn()
       .mockReturnValueOnce(false)

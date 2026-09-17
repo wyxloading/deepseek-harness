@@ -598,7 +598,7 @@ exit_plan_mode stays in the model-facing schema while planning is inactive so tr
 
 ### `bash`
 
-Execute a bash command (`bash -c`) and return its stdout/stderr. Each call runs in a fresh shell; pass `workdir` instead of using `cd`. Managed `$DSH_*` variables expose current harness environment facts. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`, a policy denial: do not retry another way.
+Execute a bash command (`bash -c`) and return its stdout/stderr. Each call runs in a fresh shell; pass `workdir` instead of using `cd`. Managed `$DSH_*` variables expose current harness environment facts. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Set `detached: true` to start the command outside the harness-managed process range: its child processes survive the command and later tool calls and are never terminated or tracked by the harness, so stop them yourself with a later command. Detached is unavailable while a confining sandbox is active. Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`, a policy denial: do not retry another way.
 
 ```json
 {
@@ -619,6 +619,10 @@ Execute a bash command (`bash -c`) and return its stdout/stderr. Each call runs 
     "workdir": {
       "type": "string",
       "description": "Working directory for this command. Defaults to the session workspace; a relative path is resolved against it."
+    },
+    "detached": {
+      "type": "boolean",
+      "description": "Start the command outside the harness-managed process range: its child processes survive this command and later calls and are never terminated by the harness. You own stopping them. Unavailable under a confining sandbox."
     },
     "run_in_background": {
       "type": "boolean",
