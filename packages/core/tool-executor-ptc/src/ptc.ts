@@ -645,12 +645,17 @@ export function createRunCodeTool(
         // silently dropping the binding), and the runtime host resolves
         // binding names as own properties only.
         const functions: Record<string, PtcBindingFunction> = Object.create(null) as Record<string, PtcBindingFunction>
+        // Tools that block on a person: the runtime keeps their wait out of the
+        // program's elapsed budget, so a question asked inside a program is not
+        // raced by the deadline (see PtcBindingNamespace.pausesBudget).
+        const pausesBudget: string[] = []
         // Enumerate the CALLING AGENT's visible set (scoped tools join,
         // restricted globals vanish) — the same view the SDK section declared,
         // so a program can bind exactly what its prompt promised; sub-dispatch
         // re-resolves per call through the same view (exec.agent threads down).
         for (const schema of tools.schemas(exec.agent, exec.toolSet)) {
           Object.defineProperty(functions, schema.name, { enumerable: true, value: binding(deepFreeze(schema)) })
+          if (tools.get(schema.name, exec.agent, exec.toolSet)?.waitsForHuman === true) pausesBudget.push(schema.name)
         }
 
         try {
@@ -678,6 +683,7 @@ export function createRunCodeTool(
               bindings: [{
                 global: 'tools',
                 functions,
+                ...pausesBudget.length > 0 ? { pausesBudget } : {},
                 errorClass: { name: 'ToolCallError', memberNameProperty: 'toolName' },
               }],
               signal: runController.signal,

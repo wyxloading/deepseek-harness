@@ -112,6 +112,34 @@ describe('Node program process', () => {
     expect(result.error).toBeUndefined()
   })
 
+  it('keeps a declared human wait out of the elapsed budget', async () => {
+    const { run } = await setup({ timeoutMs: 800, graceMs: 50 })
+    const namespace = { ...bindings({ ask: async () => { await new Promise((resolve) => { setTimeout(resolve, 1_500) }); return 'answered' } })[0]!, pausesBudget: ['ask'] }
+    const result = await run({ program: 'return await tools.ask({});', bindings: [namespace] })
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('answered')
+  })
+
+  it('still expires the budget while an undeclared binding call is outstanding', async () => {
+    const { run } = await setup({ timeoutMs: 300, graceMs: 50 })
+    const result = await run({
+      program: 'return await tools.ask({});',
+      bindings: bindings({ ask: async () => { await new Promise((resolve) => { setTimeout(resolve, 1_000) }); return 'late' } }),
+    })
+    expect(result.error?.kind).toBe('timeout')
+  })
+
+  it('resumes the remaining budget after the human wait settles', async () => {
+    const { run } = await setup({ timeoutMs: 800, graceMs: 50 })
+    const namespace = { ...bindings({ ask: async () => { await new Promise((resolve) => { setTimeout(resolve, 1_500) }); return 'answered' } })[0]!, pausesBudget: ['ask'] }
+    const result = await run({
+      program: 'await tools.ask({}); await new Promise(resolve => { setTimeout(resolve, 1_500) }); return "finished";',
+      bindings: [namespace],
+    })
+    expect(result.error?.kind).toBe('timeout')
+    expect(result.error?.message).toContain('execution deadline reached (800ms)')
+  })
+
   it('retains raw native stdout and stderr separately from control frames', async () => {
     const { run } = await setup()
     const result = await run({ program: 'const fs = await import("node:fs"); fs.writeSync(1,"native-out你好"); fs.writeSync(2,"native-err🙂"); return 42;', bindings: [] })
@@ -168,7 +196,7 @@ describe('Node program process', () => {
     expect(result.logs).toEqual(['before hot loop'])
   })
 
-  it('does not pause the deadline while a binding is pending', async () => {
+  it('does not pause the deadline while an undeclared binding is pending', async () => {
     const { run } = await setup({ timeoutMs: 1000, graceMs: 50 })
     const result = await run({ program: 'void tools.wait({}); for (;;) {}', bindings: bindings({ wait: () => new Promise(() => {}) }) })
     expect(result.error?.kind).toBe('timeout')

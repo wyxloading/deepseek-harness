@@ -106,6 +106,10 @@ export function registerTimedAskUser(ctx: Context, timeout = 120): void {
   ctx.tools.register(defineTool({
     name: 'ask_user_question',
     description,
+    // The call blocks on the person answering: a caller's elapsed budget (the
+    // PTC run deadline) must not include that wait, whatever the foreground
+    // timeout allows.
+    waitsForHuman: true,
     parameters: {
       questions: {
         type: 'array',

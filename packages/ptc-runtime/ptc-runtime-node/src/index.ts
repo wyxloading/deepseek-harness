@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-fs'
 import type { BirpcReturn } from 'birpc'
 import { invokeBinding, validateBindings } from './bindings.ts'
+import { RunBudget } from './budget.ts'
 import { createProcessRpc } from './rpc.ts'
 import { bootstrapArgs, resolveLaunch } from './launch.ts'
 import { NodeConfig, validateConfig } from './config.ts'
@@ -150,8 +151,7 @@ export class NodePtcRuntime extends PtcRuntime {
     let overflowResult: PtcRunResult | undefined
     let stderr = ''
     let parsing = true
-    const wallTimer = spec.timeoutMs === null ? undefined
-      : setTimeout(() => { timedOut = true; controller.abort('execution deadline reached') }, spec.timeoutMs)
+    const budget = new RunBudget(spec.timeoutMs, () => { timedOut = true; controller.abort('execution deadline reached') })
     let stopping: Promise<boolean> | undefined
     const stop = (): Promise<boolean> => {
       if (stopping !== undefined) return stopping
@@ -165,7 +165,7 @@ export class NodePtcRuntime extends PtcRuntime {
     const finish = (failure?: PtcRunFailure, value?: PtcJsonValue): void => {
       if (settled) return
       settled = true
-      clearTimeout(wallTimer)
+      budget.dispose()
       signal.removeEventListener('abort', onAbort)
       channel?.$close()
       void (async () => {
@@ -300,7 +300,8 @@ export class NodePtcRuntime extends PtcRuntime {
         },
         invoke: async (global, name, wire) => {
           // Wire identities that are not strings fail these lookups.
-          const functions = bindings.get(global)?.functions
+          const namespace = bindings.get(global)
+          const functions = namespace?.functions
           const fn = functions !== undefined && Object.hasOwn(functions, name) ? functions[name] : undefined
           if (typeof fn !== 'function') return refuse('program requested an undeclared binding')
           const args = decodePtcJsonWire(wire)
@@ -311,7 +312,16 @@ export class NodePtcRuntime extends PtcRuntime {
           }
           pending += 1
           pendingBytes += bytes
-          try { return await callBinding(fn, args) } finally { pending -= 1; pendingBytes -= bytes }
+          // A declared external wait (PtcBindingNamespace.pausesBudget) holds the
+          // clock for as long as it is outstanding, so a person's answer time
+          // never spends the program's budget.
+          const pauses = namespace?.pausesBudget?.includes(name) === true
+          if (pauses) budget.pause()
+          try { return await callBinding(fn, args) } finally {
+            pending -= 1
+            pendingBytes -= bytes
+            if (pauses) budget.resume()
+          }
         },
       }, [], (error, kind) => {
         if (kind === 'protocol') protocolFailure(messageOf(error))

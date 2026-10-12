@@ -503,6 +503,33 @@ describe('mode-aware wire contribution', () => {
     expect(assembly.tools.map(tool => tool.name)).toEqual([RUN_CODE_NAME])
   })
 
+  it('lists a human-wait tool in the binding namespace so the runtime pauses its wait', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    registerEcho(ctx)
+    runtime.behavior = request => Promise.resolve({
+      logs: [],
+      value: JSON.stringify({
+        names: Object.keys(request.bindings[0]!.functions).sort(),
+        pauses: request.bindings[0]!.pausesBudget ?? null,
+      }),
+    })
+
+    const withoutHumanWait = await runCode(ctx, 'program')
+    expect(JSON.parse((withoutHumanWait.content[0] as { text: string }).text)).toEqual({ names: ['echo'], pauses: null })
+
+    ctx.tools.register(defineTool({
+      name: 'ask',
+      description: 'Ask the user a question.',
+      waitsForHuman: true,
+      parameters: {},
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      execute: () => Promise.resolve('answered'),
+    }))
+
+    const withHumanWait = await runCode(ctx, 'program')
+    expect(JSON.parse((withHumanWait.content[0] as { text: string }).text)).toEqual({ names: ['ask', 'echo'], pauses: ['ask'] })
+  })
+
   it('never exposes run_code to programs (no recursive dispatch path)', async () => {
     const { ctx, runtime } = await setup({ mode: 'ptc' })
     registerEcho(ctx)

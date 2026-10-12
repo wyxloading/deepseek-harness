@@ -176,6 +176,13 @@ describe('ask_user_question tool', () => {
     expect(JSON.stringify(schema)).not.toContain('Wait seconds for the entire batch (default 120)')
   })
 
+  it('declares that its call waits for a human answer in both modes', async () => {
+    for (const config of [{ mode: 'legacy' } as const, { mode: 'timed', timeout: -1 } as const]) {
+      const ctx = await setup(config)
+      expect(ctx.tools.get('ask_user_question')?.waitsForHuman, config.mode).toBe(true)
+    }
+  })
+
   it('registers a model-facing tool schema', async () => {
     const ctx = await setup()
     const schema = ctx.tools.schemas().find(tool => tool.name === 'ask_user_question')
