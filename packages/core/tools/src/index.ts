@@ -265,6 +265,14 @@ export interface ToolDefinition extends ToolSchema {
    */
   timeoutMs?: number
   /**
+   * Declaration that this tool's call blocks until a person answers, so a
+   * caller's elapsed budget must not include that wait. The PTC bridge lists
+   * such a tool in its binding namespace's `pausesBudget`, which pauses the
+   * `run_code` deadline while the call is outstanding. Never model-visible;
+   * omission means the call consumes the caller's budget like any other work.
+   */
+  waitsForHuman?: boolean
+  /**
    * Pure synchronous classifier for overlap with sibling tool calls. Only
    * `true` opts in; omission, exceptions, non-`true` returns, and invalid
    * `defineTool` arguments are exclusive. This metadata is never model-visible.

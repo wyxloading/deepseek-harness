@@ -25,6 +25,11 @@ export function validateBindings(request: PtcRunRequest): Map<string, PtcBinding
     if (bindings.has(namespace.global)) {
       throw new Error(`dsh-ptc-runtime-node: duplicate binding global ${JSON.stringify(namespace.global)}`)
     }
+    for (const member of namespace.pausesBudget ?? []) {
+      if (!Object.hasOwn(namespace.functions, member)) {
+        throw new Error(`dsh-ptc-runtime-node: pausesBudget member ${JSON.stringify(member)} is not declared in ${JSON.stringify(namespace.global)}`)
+      }
+    }
     bindings.set(namespace.global, namespace)
   }
 

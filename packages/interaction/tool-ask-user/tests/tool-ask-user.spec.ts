@@ -55,6 +55,11 @@ function stubAgent(id: string, delegationDepth = 0): Agent {
 }
 
 describe('ask_user_question tool', () => {
+  it('declares that its call waits for a human answer', async () => {
+    const ctx = await setup()
+    expect(ctx.tools.get('ask_user_question')?.waitsForHuman).toBe(true)
+  })
+
   it('registers a model-facing tool schema', async () => {
     const ctx = await setup()
     const schema = ctx.tools.schemas().find(tool => tool.name === 'ask_user_question')

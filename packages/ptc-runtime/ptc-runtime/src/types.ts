@@ -62,6 +62,15 @@ export interface PtcBindingNamespace {
   global: string
   /** The callable members, keyed by the exact name the program calls. */
   functions: Record<string, PtcBindingFunction>
+  /**
+   * Members whose outstanding call pauses the run's elapsed budget. The budget
+   * measures program progress, so a call that waits on a person rather than on
+   * host work must not consume it: the runtime stops counting when such a call
+   * starts and resumes with the remaining time when it settles. Every name MUST
+   * name a member of {@link PtcBindingNamespace.functions}; a runtime rejects an
+   * unknown name. Omission counts every call toward the budget.
+   */
+  pausesBudget?: readonly string[]
   /** Optional program-visible typed rejection contract for this namespace. */
   errorClass?: PtcBindingErrorClass
 }

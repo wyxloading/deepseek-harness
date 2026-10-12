@@ -14,6 +14,7 @@ import type {} from '@deepseek-ai/dsh-fs'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import { validateBindings } from './bindings.ts'
 import { JsonChannel } from './channel.ts'
+import { RunBudget } from './budget.ts'
 import { bootstrapArgs } from './launch.ts'
 import type { LaunchConfig } from './launch.ts'
 import { OutputLedger } from './output-ledger.ts'
@@ -160,12 +161,11 @@ export class NodePtcRuntime extends PtcRuntime {
     let overflowResult: PtcRunResult | undefined
     let stderr = ''
     let parsing = true
-    const wallTimer = spec.timeoutMs === null ? undefined
-      : setTimeout(() => { timedOut = true; controller.abort('execution deadline reached') }, spec.timeoutMs)
+    const budget = new RunBudget(spec.timeoutMs, () => { timedOut = true; controller.abort('execution deadline reached') })
     const finish = (failure?: PtcRunFailure, value?: PtcJsonValue): void => {
       if (settled) return
       settled = true
-      clearTimeout(wallTimer)
+      budget.dispose()
       signal.removeEventListener('abort', onAbort)
       channel?.close()
       void (async () => {
@@ -312,13 +312,19 @@ export class NodePtcRuntime extends PtcRuntime {
           case 'call': {
             if (!Number.isSafeInteger(raw.id) || raw.id !== nextId || typeof raw.global !== 'string' || typeof raw.name !== 'string') { protocolFailure('invalid binding call identity'); return }
             nextId += 1
-            const functions = bindings.get(raw.global)?.functions
+            const namespace = bindings.get(raw.global)
+            const functions = namespace?.functions
             const fn = functions !== undefined && Object.hasOwn(functions, raw.name) ? functions[raw.name] : undefined
             if (typeof fn !== 'function') { protocolFailure('program requested an undeclared binding'); return }
             const args = decodePtcJsonWire(raw.args)
             if (args === undefined) { protocolFailure('binding arguments must be lossless JSON'); return }
             if (++pending > this.config.maxPendingCalls || (pendingBytes += bytes) > this.config.maxMessageBytes) { protocolFailure('pending binding calls exceed configured limits'); return }
             const id = raw.id
+            // A declared external wait (PtcBindingNamespace.pausesBudget) holds the
+            // clock for as long as it is outstanding, so a person's answer time
+            // never spends the program's budget.
+            const pauses = namespace?.pausesBudget?.includes(raw.name) === true
+            if (pauses) budget.pause()
             void (async () => {
               let reply: unknown
               try {
@@ -330,6 +336,7 @@ export class NodePtcRuntime extends PtcRuntime {
               } finally {
                 pending -= 1
                 pendingBytes -= bytes
+                if (pauses) budget.resume()
               }
               if (!settled) await transport.send(reply)
             })().catch((error: unknown) => { protocolFailure(messageOf(error)) })
