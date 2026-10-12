@@ -17,6 +17,12 @@ describe('program binding validation', () => {
   it.each(['', 'name', '__member__'])('rejects invalid error member %s', (memberNameProperty) => {
     expect(() => validateBindings({ program: '', bindings: [{ global: 'tools', functions: {}, errorClass: { name: 'ToolError', memberNameProperty } }] })).toThrow()
   })
+  it('accepts declared budget-pausing members and rejects unknown ones', () => {
+    const functions = { ask: async () => 'answered' }
+    expect(validateBindings({ program: '', bindings: [{ global: 'tools', functions, pausesBudget: ['ask'] }] }).get('tools')?.pausesBudget).toEqual(['ask'])
+    expect(() => validateBindings({ program: '', bindings: [{ global: 'tools', functions, pausesBudget: ['missing'] }] }))
+      .toThrow('pausesBudget member "missing" is not declared in "tools"')
+  })
   it('rejects two injected constructors with the same name', () => {
     expect(() => validateBindings({ program: '', bindings: ['first', 'second'].map(global => ({ global, functions: {}, errorClass: { name: 'ToolError', memberNameProperty: 'member' } })) })).toThrow('duplicate')
   })

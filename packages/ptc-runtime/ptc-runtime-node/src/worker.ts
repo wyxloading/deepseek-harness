@@ -9,6 +9,7 @@ import type { PolicyProcesses } from './policy-processes.ts'
 import type { ResolvedConfig } from './config.ts'
 import type { ExecutionMode } from './execution.ts'
 import { invokeBinding } from './bindings.ts'
+import { RunBudget } from './budget.ts'
 import type { BirpcReturn } from 'birpc'
 import { createProcessRpc } from './rpc.ts'
 import { bootstrapArgs } from './launch.ts'
@@ -29,6 +30,8 @@ interface Evaluation {
   invoke: typeof invokeBinding
   pending: number
   pendingBytes: number
+  /** Pausable elapsed budget shared with the invoke handler. */
+  budget: RunBudget
   admit(text: string): void
   finish(error?: PtcRunFailure, value?: PtcJsonValue, discard?: boolean): void
 }
@@ -123,11 +126,11 @@ export class ProgramWorker {
     const logs: string[] = []
     let overflowed = false
     const result = Promise.withResolvers<PtcRunResult>()
-    const timer = spec.timeoutMs === null ? undefined : setTimeout(() => {
+    const budget = new RunBudget(spec.timeoutMs, () => {
       const phase = evaluation.completion !== undefined ? 'during execution' : 'before code started'
       const message = `execution timed out ${phase} (${spec.timeoutMs}ms)`
       evaluation.finish({ kind: 'timeout', message }, undefined, evaluation.completion === undefined)
-    }, spec.timeoutMs)
+    })
     const onAbort = (): void => {
       evaluation.finish({ kind: 'abort', message: this.retainsState ? 'execution canceled' : messageOf(spec.signal?.reason) }, undefined, evaluation.completion === undefined)
     }
@@ -141,7 +144,7 @@ export class ProgramWorker {
           global: binding.global, names: Object.keys(binding.functions), ...binding.errorClass ? { errorClass: binding.errorClass } : {},
         })),
       },
-      spec, bindings, invoke: AsyncLocalStorage.bind(invokeBinding), pending: 0, pendingBytes: 0,
+      spec, bindings, invoke: AsyncLocalStorage.bind(invokeBinding), pending: 0, pendingBytes: 0, budget,
       admit: (text) => {
         if (overflowed) return
         if (!output.admit(text, logs)) {
@@ -153,7 +156,7 @@ export class ProgramWorker {
       finish: (error, value, discard = false) => {
         if (evaluation.settled) return
         evaluation.settled = true
-        clearTimeout(timer)
+        budget.dispose()
         spec.signal?.removeEventListener('abort', onAbort)
         const complete = (): PtcRunResult => overflowed || error?.kind === 'output-limit' ? output.limit(logs)
           : error ? output.failure(logs, error) : output.success(logs, value)
@@ -328,7 +331,8 @@ export class ProgramWorker {
         const evaluation = this.active
         if (!this.ready || !evaluation) return refuse('binding call arrived without an active PTC evaluation')
         if (evaluation.settled) throw new Error('PTC evaluation ended before the binding completed')
-        const functions = evaluation.bindings.get(global)?.functions
+        const namespace = evaluation.bindings.get(global)
+        const functions = namespace?.functions
         const fn = functions !== undefined && Object.hasOwn(functions, name) ? functions[name] : undefined
         if (!this.mode.retainsState && typeof fn !== 'function') return refuse('program requested an undeclared binding')
         const args = decodePtcJsonWire(wire)
@@ -339,6 +343,11 @@ export class ProgramWorker {
         }
         evaluation.pending += 1
         evaluation.pendingBytes += bytes
+        // A declared external wait (PtcBindingNamespace.pausesBudget) holds the
+        // clock while it is outstanding, so a person's answer time never spends
+        // the program's budget.
+        const pauses = namespace?.pausesBudget?.includes(name) === true
+        if (pauses) evaluation.budget.pause()
         let value
         try {
           value = await evaluation.invoke(fn, args)
@@ -349,6 +358,7 @@ export class ProgramWorker {
         } finally {
           evaluation.pending -= 1
           evaluation.pendingBytes -= bytes
+          if (pauses) evaluation.budget.resume()
         }
         // A late binding result must not fill the pipe shared with the next evaluation.
         // oxlint-disable-next-line typescript/no-unnecessary-condition -- The evaluation may settle while the binding is pending.

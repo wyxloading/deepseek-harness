@@ -119,6 +119,41 @@ describe('Node program process', () => {
     expect(result.error).toBeUndefined()
   })
 
+  it('keeps a declared human wait out of the elapsed budget', async () => {
+    const { run } = await setup({ timeoutMs: 2_500, graceMs: 50 })
+    const answer = Promise.withResolvers<string>()
+    onTestFinished(() => { answer.resolve('abandoned') })
+    const namespace = { ...bindings({ ask: () => answer.promise })[0]!, pausesBudget: ['ask'] }
+    const pending = run({ program: 'return await tools.ask({});', bindings: [namespace] })
+    // The wait outlasts the whole budget: only the declared pause keeps the run alive.
+    await new Promise((resolve) => { setTimeout(resolve, 4_000) })
+    answer.resolve('answered')
+    const result = await pending
+    expect(result.error).toBeUndefined()
+    expect(result.value).toBe('answered')
+  })
+
+  it('still expires the budget while an undeclared binding call is outstanding', async () => {
+    const { run } = await setup({ timeoutMs: 300, graceMs: 50 })
+    const result = await run({
+      program: 'return await tools.ask({});',
+      bindings: bindings({ ask: async () => { await new Promise((resolve) => { setTimeout(resolve, 1_000) }); return 'late' } }),
+    })
+    expect(result.error?.kind).toBe('timeout')
+  })
+
+  it('resumes the remaining budget after the human wait settles', async () => {
+    const { run } = await setup({ timeoutMs: 2_500, graceMs: 50 })
+    const namespace = { ...bindings({ ask: async () => { await new Promise((resolve) => { setTimeout(resolve, 1_500) }); return 'answered' } })[0]!, pausesBudget: ['ask'] }
+    const result = await run({
+      program: 'await tools.ask({}); await new Promise(resolve => { setTimeout(resolve, 4_000) }); return "finished";',
+      bindings: [namespace],
+    })
+    expect(result.error?.kind).toBe('timeout')
+    // The reply names the run's original budget: the pause held the clock, it did not add time.
+    expect(result.error?.message).toContain('execution timed out during execution (2500ms)')
+  })
+
   it('retains raw native stdout and stderr separately from control frames', async () => {
     const { run } = await setup()
     const result = await run({ program: 'const fs = await import("node:fs"); fs.writeSync(1,"native-out你好"); fs.writeSync(2,"native-err🙂"); return 42;', bindings: [] })
@@ -185,7 +220,7 @@ describe('Node program process', () => {
     } finally { controller.abort(); await pending }
   })
 
-  it('does not pause the deadline while a binding is pending', async () => {
+  it('does not pause the deadline while an undeclared binding is pending', async () => {
     const { run } = await setup({ timeoutMs: 1000, graceMs: 50 })
     const result = await run({ program: 'void tools.wait({}); for (;;) {}', bindings: bindings({ wait: () => new Promise(() => {}) }) })
     expect(result.error?.kind).toBe('timeout')
