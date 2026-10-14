@@ -480,9 +480,12 @@ class JsonlSessionPersistence extends SessionPersistence {
     // append lands mid-scan is then still in this snapshot (its artifact may
     // predate the scan), so create-to-list visibility never has a hole.
     const pending = [...this.tracker.pendingEntries()]
-    const artifacts = await this.listArtifacts(signal)
+    // The artifact scan hands back the one enumeration it performed, so the
+    // historical digest never pays a second corpus walk.
+    const generations: ResolvedJsonlGeneration[] = []
+    const artifacts = await this.listArtifacts(signal, generations)
     const corpusRevision = artifacts.some(artifact => artifact.sourceVersion < SESSION_FORMAT_VERSION)
-      ? await this.historicalCorpusRevision(signal) : undefined
+      ? await this.historicalCorpusRevision(signal, generations) : undefined
     for (const artifact of artifacts) {
       signal?.throwIfAborted()
       try {
@@ -1034,9 +1037,21 @@ class JsonlSessionPersistence extends SessionPersistence {
     return sources
   }
 
-  /** Historical logical events depend on the corpus, including members with unreadable headers. */
-  private async historicalCorpusRevision(signal?: AbortSignal): Promise<string> {
-    const paths = (await this.listGenerations(signal)).map(source => source.sourcePath).sort()
+  /**
+   * Digest the physical revisions of the corpus one observation already holds.
+   * Historical logical events depend on the corpus, including members with
+   * unreadable headers, so a caller that enumerated the generations passes them
+   * in and the digest describes that same scan.
+   * @param signal - optional cancellation for the per-member stats.
+   * @param resolved - generations the caller already enumerated; omitted to enumerate here.
+   * @returns the corpus revision digest.
+   */
+  private async historicalCorpusRevision(
+    signal?: AbortSignal,
+    resolved?: readonly ResolvedJsonlGeneration[],
+  ): Promise<string> {
+    const sources = resolved === undefined ? await this.listGenerations(signal) : resolved
+    const paths = sources.map(source => source.sourcePath).sort()
     const hash = createHash('sha256')
     for (const path of paths) {
       signal?.throwIfAborted()
@@ -1053,15 +1068,28 @@ class JsonlSessionPersistence extends SessionPersistence {
     return hash.digest('hex')
   }
 
+  /**
+   * Read one header per resolved generation.
+   * @param signal - optional cancellation for enumeration and header reads.
+   * @param enumerated - optional array receiving the generations this scan
+   *   resolved, so one caller can reuse a single enumeration for corpus work.
+   * @returns one artifact per readable header.
+   */
   private async listArtifacts(
     signal?: AbortSignal,
+    enumerated?: ResolvedJsonlGeneration[],
   ): Promise<Array<{ header: SessionHeader; path: string; sourceVersion: number }>> {
     signal?.throwIfAborted()
     await this.ensureRootEncoding()
     signal?.throwIfAborted()
+    const sources = await this.listGenerations(signal)
+    if (enumerated !== undefined) {
+      enumerated.length = 0
+      for (const source of sources) enumerated.push(source)
+    }
     const artifacts: Array<{ header: SessionHeader; path: string; sourceVersion: number }> = []
     const ids = new Set<SessionId>()
-    for (const selected of await this.listGenerations(signal)) {
+    for (const selected of sources) {
       signal?.throwIfAborted()
       let header: SessionHeader | undefined
       try {
