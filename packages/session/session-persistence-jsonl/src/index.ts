@@ -66,6 +66,13 @@ export type { JsonlCompression } from './format.ts'
  */
 const COLD_LOG_MEMO_MAX_ENTRIES = 2
 
+/**
+ * Internal listing-reuse policy, not deployment configuration: an ordinary
+ * store's listing headers stay resident, so a repeat listing does not
+ * decompress every header frame again.
+ */
+const HEADER_MEMO_MAX_ENTRIES = 8192
+
 const DEFAULT_COMPRESSION: JsonlCompression = 'zstd'
 /**
  * Internal scheduling constant, not deployment configuration: balance
@@ -312,6 +319,13 @@ class JsonlSessionPersistence extends SessionPersistence {
   private readonly coldLogMemo = new Map<SessionId, StoredLog>()
   /** One joinable decode/migration operation per selected historical Session file revision. */
   private readonly migrationPreparations = new Map<SessionId, MigrationPreparation>()
+  /**
+   * Bounded LRU of generation headers keyed by artifact path and guarded by the
+   * stat-derived revision, so a repeated listing (connect, search, reference
+   * discovery) decompresses each header frame once. An append or rewrite moves
+   * the revision and misses without an invalidation hook.
+   */
+  private readonly headerMemo = new Map<string, { revision: PersistenceRevision; header: GenerationHeader }>()
 
   constructor(ctx: Context, public config: Config, private readonly tracker: JsonlBackendTracker) {
     super(ctx)
@@ -1172,7 +1186,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const headers = await settleLimited(this.listLimit, generations, async (selected) => {
       signal?.throwIfAborted()
       try {
-        return { selected, metadata: await this.readGenerationHeader(selected, undefined, signal) }
+        return { selected, metadata: await this.listGenerationHeader(selected, signal) }
       } catch (error: unknown) {
         if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) {
           return { selected, metadata: undefined }
@@ -1194,6 +1208,47 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     signal?.throwIfAborted()
     return artifacts
+  }
+
+  /**
+   * Read one generation header through the revision-keyed listing memo.
+   *
+   * A listing repeats on connect, search, and reference discovery, and every
+   * repeat would otherwise reopen and decompress each artifact's header frame.
+   * @param selected - generation to read.
+   * @param signal - optional cancellation for the stat and the header read.
+   * @returns the generation header, or `undefined` when the artifact disappeared.
+   */
+  private async listGenerationHeader(
+    selected: ResolvedJsonlGeneration,
+    signal?: AbortSignal,
+  ): Promise<GenerationHeader | undefined> {
+    signal?.throwIfAborted()
+    let revision: PersistenceRevision | undefined
+    try {
+      revision = fileRevision(await stat(selected.sourcePath, { bigint: true }))
+    } catch (error: unknown) {
+      if (!isENOENT(error)) throw error
+      // The generation vanished after enumeration; the header read reports it absent.
+    }
+    if (revision !== undefined) {
+      const memoized = this.headerMemo.get(selected.sourcePath)
+      if (memoized !== undefined && memoized.revision === revision) {
+        this.headerMemo.delete(selected.sourcePath)
+        this.headerMemo.set(selected.sourcePath, memoized)
+        return memoized.header
+      }
+    }
+    const header = await this.readGenerationHeader(selected, undefined, signal)
+    if (header !== undefined && revision !== undefined) {
+      this.headerMemo.delete(selected.sourcePath)
+      this.headerMemo.set(selected.sourcePath, { revision, header })
+      for (const oldest of this.headerMemo.keys()) {
+        if (this.headerMemo.size <= HEADER_MEMO_MAX_ENTRIES) break
+        this.headerMemo.delete(oldest)
+      }
+    }
+    return header
   }
 
   /** Read and translate one selected generation header without inspecting its body. */

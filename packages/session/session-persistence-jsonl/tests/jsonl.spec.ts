@@ -2628,6 +2628,95 @@ describe('JsonlSessionPersistence: edge cases', () => {
     scan.mockRestore()
   })
 
+  it('reuses one header read across repeated listings', async () => {
+    const m = meta('memoized-listing', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const persistence = ctx.sessionPersistence as unknown as {
+      readGenerationHeader(...args: unknown[]): Promise<SessionHeader | undefined>
+    }
+    const reads = vi.spyOn(persistence, 'readGenerationHeader')
+
+    const first = await ctx.sessionPersistence.list()
+    const afterFirst = reads.mock.calls.length
+    const second = await ctx.sessionPersistence.list()
+
+    expect(afterFirst).toBe(1)
+    expect(reads.mock.calls.length).toBe(afterFirst)
+    expect(second).toEqual(first)
+    reads.mockRestore()
+  })
+
+  it('misses the listing memo when an artifact revision changes', async () => {
+    const m = meta('memo-miss-on-append', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const persistence = ctx.sessionPersistence as unknown as {
+      readGenerationHeader(...args: unknown[]): Promise<SessionHeader | undefined>
+    }
+    const reads = vi.spyOn(persistence, 'readGenerationHeader')
+    await ctx.sessionPersistence.list()
+    const afterFirst = reads.mock.calls.length
+
+    // Another backend instance over the same root appends behind this one's memo.
+    const foreign = new Context()
+    await foreign.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+    const writer = await foreign.sessionPersistence.open(m.id, 'write')
+    await writer.append([
+      { type: 'turn/start', seq: SessionSeq(6), time: 9, data: { turn: 2 } },
+      { type: 'turn/end', seq: SessionSeq(7), time: 10, data: { turn: 2, reason: { kind: 'completed' } } },
+    ] as SessionEvent[])
+    await writer.close()
+    await foreign.fiber.dispose()
+    await ctx.sessionPersistence.list()
+
+    expect(reads.mock.calls.length).toBeGreaterThan(afterFirst)
+    reads.mockRestore()
+  })
+
+  it('skips a generation removed after enumeration', async () => {
+    const m = meta('vanishing-generation', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const file = rawLogPath(root, m.cwd, m.id)
+    const persistence = ctx.sessionPersistence as unknown as {
+      listGenerations(signal?: AbortSignal): Promise<unknown[]>
+    }
+    const scan = persistence.listGenerations.bind(persistence)
+    vi.spyOn(persistence, 'listGenerations').mockImplementation(async (signal) => {
+      const sources = await scan(signal)
+      await rm(file)
+      return sources
+    })
+
+    await expect(ctx.sessionPersistence.list()).resolves.toEqual([])
+  })
+
+  it('keeps the listing header memo bounded', async () => {
+    const m = meta('bounded-memo', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const persistence = ctx.sessionPersistence as unknown as {
+      headerMemo: Map<string, { revision: string; header: SessionHeader }>
+    }
+    for (let i = 0; i < 9000; i += 1) {
+      persistence.headerMemo.set(`/filler/${String(i)}`, { revision: 'filler', header: meta(`filler-${String(i)}`) })
+    }
+
+    await ctx.sessionPersistence.list()
+
+    expect(persistence.headerMemo.size).toBe(8192)
+  })
+
+  it('propagates a non-ENOENT stat failure from the listing memo guard', async () => {
+    const m = meta('memo-stat-fault', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const failure = Object.assign(new Error('listing memo stat denied'), { code: 'EACCES' })
+    statFailure.path = rawLogPath(root, m.cwd, m.id)
+    statFailure.error = failure
+    try {
+      await expect(ctx.sessionPersistence.list()).rejects.toBe(failure)
+    } finally {
+      statFailure.error = undefined
+    }
+  })
+
   it('groups sessions whose cwd paths normalize to the same project directory', async () => {
     const first = meta('normalized-first', '/a/b-c')
     const second = meta('normalized-second', '/a-b/c')
