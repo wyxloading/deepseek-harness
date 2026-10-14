@@ -2138,7 +2138,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     queueMicrotask(() => { controller.abort(reason) })
 
     await expect(pending).rejects.toBe(reason)
-    expect(discovery).toHaveBeenCalledWith(controller.signal)
+    expect(discovery).toHaveBeenCalledWith(controller.signal, expect.any(Array))
   })
 })
 
@@ -2611,6 +2611,21 @@ describe('JsonlSessionPersistence: edge cases', () => {
 
     const ids = (await ctx.sessionPersistence.list()).map(s => s.header.id).sort()
     expect(ids).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('enumerates the corpus once for a listing that also needs a historical digest', async () => {
+    const header = meta('single-scan-listing', '/work')
+    const path = historicalLogPath(root, header.cwd, header.id)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${JSON.stringify(releasedV0Header(header))}\n`)
+    const persistence = ctx.sessionPersistence as unknown as {
+      listGenerations(signal?: AbortSignal): Promise<readonly unknown[]>
+    }
+    const scan = vi.spyOn(persistence, 'listGenerations')
+
+    expect(await ctx.sessionPersistence.list()).toHaveLength(1)
+    expect(scan).toHaveBeenCalledTimes(1)
+    scan.mockRestore()
   })
 
   it('groups sessions whose cwd paths normalize to the same project directory', async () => {
