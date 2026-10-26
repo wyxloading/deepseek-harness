@@ -1,5 +1,8 @@
 # With 1,800 tokens of headroom, a 1,000-token output reservation lowers the
-# trigger from 6,822 to 5,822, between the history and its condensed replacement.
+# trigger from 7,020 to 6,020, between the history and its condensed replacement.
+# The window is 8,820 rather than 8,622 so the recorded three-call flow keeps
+# compacting once after the bash tool's detached-containment guidance lengthened
+# the system prompt.
 
 - id: agent-instructions
   disabled: true
@@ -31,7 +34,7 @@
             name: DeepSeek
             models:
               - id: deepseek-v4-flash
-                contextWindow: 8622
+                contextWindow: 8820
                 defaultMaxTokens: 1000
     - id: compaction-working-directory
       name: '../../../packages/test-support/session-snapshot/tests/fixtures/compaction-working-directory.ts'

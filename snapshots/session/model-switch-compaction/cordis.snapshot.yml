@@ -1,4 +1,7 @@
 # The second request selects a smaller model before its header is committed.
+# The smaller model's window is 8,820 rather than 8,622 so the recorded
+# three-call flow keeps compacting once after the bash tool's
+# detached-containment guidance lengthened the system prompt.
 
 - id: agent-instructions
   disabled: true
@@ -33,7 +36,7 @@
                 contextWindow: 100000
                 defaultMaxTokens: 1000
               - id: deepseek-v4-pro
-                contextWindow: 8622
+                contextWindow: 8820
                 defaultMaxTokens: 1000
     - id: compaction-working-directory
       name: '../../../packages/test-support/session-snapshot/tests/fixtures/compaction-working-directory.ts'

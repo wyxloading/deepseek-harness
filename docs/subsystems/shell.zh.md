@@ -64,6 +64,13 @@ interface ShellExecRequest {
   dshEnv?: DshEnvironment | undefined
   /** Fully resolved per-call sandbox policy; sandboxing executors default it. */
   sandboxPolicy?: SandboxExecutionPolicy | undefined
+  /**
+   * Start the command outside the subprocess provider's managed range: its
+   * descendants survive the direct command and are not signalled by
+   * cancellation or composition teardown. The caller that sets this owns
+   * cleaning them up. The model-facing bash tool exposes it as `detached`.
+   */
+  detached?: boolean | undefined
 }
 ```
 
@@ -99,6 +106,11 @@ interface ShellExecSpec {
   dshEnv?: DshEnvironment | undefined
   /** Resolved sandbox policy; ignored by executors that do not confine. */
   sandboxPolicy: SandboxExecutionPolicy | undefined
+  /**
+   * Resolved detached-containment flag (see {@link ShellExecRequest.detached});
+   * absent keeps the subprocess provider's managed range.
+   */
+  detached?: boolean | undefined
 }
 ```
 

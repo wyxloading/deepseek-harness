@@ -258,6 +258,47 @@ function fallbackOwner(
 }
 
 /**
+ * Owner for a detached spawn: the direct process is the whole managed range.
+ * Signals reach only that process — never its process group or tree — and the
+ * wait resolves at its exit, so descendants that reparent or share its group
+ * remain outside this handle and survive it.
+ * @param pid - the direct process id, when the spawn published one.
+ * @param child - the direct child whose exit is the range boundary.
+ * @returns the direct-process owner used by detached spawns.
+ */
+function detachedOwner(pid: number | undefined, child: ChildProcess): BoundProcessOwner {
+  let stopped = false
+  const alive = (): boolean =>
+    !stopped && pid !== undefined && child.exitCode === null && child.signalCode === null
+  const killDirect = (signal: NodeJS.Signals): void => {
+    try {
+      child.kill(signal)
+    } catch {
+      // Delivery races process exit; teardown stays idempotent.
+    }
+  }
+  return {
+    signal: (signal) => {
+      if (!alive()) {
+        stopped = true
+        return
+      }
+      killDirect(signal)
+    },
+    waitForExit: async () => {
+      /* v8 ignore next -- bindManagedProcess memoizes this wait; the guard only protects re-entry after signal() observed absence. */
+      if (stopped) return
+      while (alive()) await sleepTick()
+      stopped = true
+    },
+    terminateForHostExit: () => {
+      if (stopped) return
+      killDirect('SIGKILL')
+    },
+  }
+}
+
+/**
  * Bind platform launch facts to the existing stdio, outcome, abort, and termination lifecycle.
  * @param spec - fully resolved argv, cwd, stdio, grace, cancellation, environment.
  * @param launch - platform streams, direct outcome, and managed-range owner.
@@ -446,7 +487,10 @@ export function bindManagedProcess(
 }
 
 /**
- * Spawn one detached PGID/taskkill fallback and bind the common lifecycle.
+ * Spawn one direct child and bind the common lifecycle. The spec's containment
+ * selects the owner: `'managed'` (also the meaning when omitted) uses the
+ * platform PGID/taskkill fallback range, while `'detached'` owns only the
+ * direct process so descendants survive the handle.
  * @param spec - fully resolved argv, cwd, stdio, grace, cancellation, environment.
  * @param internals - test-only spill-directory, platform, and taskkill overrides.
  * @returns live subprocess handle.
@@ -473,14 +517,16 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
   })
   const direct = directChildResult(child)
   const pid = child.pid
-  const owner = fallbackOwner(
-    platform,
-    pid,
-    child,
-    internals.taskkill ?? taskkillProcessTree,
-    internals.linuxProcessGroupHasLiveMembers ?? linuxProcessGroupHasLiveMembers,
-    direct,
-  )
+  const owner = spec.containment === 'detached'
+    ? detachedOwner(pid, child)
+    : fallbackOwner(
+      platform,
+      pid,
+      child,
+      internals.taskkill ?? taskkillProcessTree,
+      internals.linuxProcessGroupHasLiveMembers ?? linuxProcessGroupHasLiveMembers,
+      direct,
+    )
   return bindManagedProcess(spec, {
     stdin: child.stdin,
     stdout: child.stdout,

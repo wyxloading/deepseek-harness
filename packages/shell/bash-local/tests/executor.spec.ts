@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
@@ -121,6 +121,24 @@ describe('LocalBashExecutor.run', () => {
     // Mutually exclusive: a timeout classifies as timedOut, never also aborted.
     expect(result.aborted).toBe(false)
     expect(result.timeoutMs).toBe(100)
+  })
+
+  it.skipIf(process.platform === 'win32')('detached runs leave the command family outside the managed range', async () => {
+    const { bash } = await setup()
+    const pidFile = join(spillDir, `detached-bash-${String(Date.now())}.pid`)
+    const result = await run(bash, bash.resolve({
+      command: `sleep 60 & echo $! > ${pidFile}`,
+      detached: true,
+    }))
+    expect(result.exitCode).toBe(0)
+    const pid = Number(readFileSync(pidFile, 'utf8').trim())
+    try {
+      // The managed range ended with the direct command; its backgrounded
+      // descendant is outside the executor's ownership and still runs.
+      expect(() => { process.kill(pid, 0) }).not.toThrow()
+    } finally {
+      process.kill(pid, 'SIGKILL')
+    }
   })
 
   it('propagates abort signals', async () => {
