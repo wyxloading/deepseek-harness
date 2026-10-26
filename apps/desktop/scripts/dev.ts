@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { DESKTOP_HOST_PROTOCOL_VERSION } from '../src/host-protocol.ts'
 import type { DesktopRelease } from '../src/release.ts'
+import { pnpmInvocation } from '../../../scripts/pnpm-invocation.ts'
 import { developmentRuntimeDirectory, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
 import { prepareDevelopmentProject } from './development-project.ts'
 import { prepareDevelopmentApp } from './development-app.ts'
@@ -49,17 +50,21 @@ async function run(command: string, args: readonly string[], cwd: string, enviro
 }
 
 async function runPackageScript(script: string, cwd: string): Promise<void> {
-  const packageManager = process.env.npm_execpath
-  if (packageManager === undefined || packageManager === '') {
+  if (process.env.npm_execpath === undefined || process.env.npm_execpath === '') {
     throw new Error('desktop development: invoke this launcher through pnpm run dev:desktop or start:desktop')
   }
-  await run(process.execPath, [packageManager, 'run', script], cwd)
+  // A standalone pnpm installs its launcher as an executable, not as a JavaScript entrypoint.
+  const invocation = pnpmInvocation(['run', script])
+  await run(invocation.command, invocation.args, cwd)
 }
 
 async function launchElectron(): Promise<void> {
   const require = createRequire(import.meta.url)
   const electron: unknown = require('electron')
   if (typeof electron !== 'string') throw new Error('desktop development: electron executable is unavailable')
+  // Diagnostics are opt-in: the inspector on the shell and Host, Chromium's verbose logging, and
+  // a DevTools window all tax an ordinary development session that nobody is debugging.
+  const diagnostics = (process.env.DSH_DESKTOP_DIAGNOSTICS ?? 'off') === 'on'
   const mainPort = debugPort('DSH_DESKTOP_MAIN_INSPECT_PORT', 9229)
   const rendererPort = debugPort('DSH_DESKTOP_RENDERER_DEBUG_PORT', 9222)
   const hostPort = debugPort('DSH_DESKTOP_HOST_INSPECT_PORT', 9230)
@@ -69,13 +74,15 @@ async function launchElectron(): Promise<void> {
     ...process.env,
     DSH_HOME: home,
     DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.DSH_DESKTOP_PRIMARY_RUNTIME_DIR ?? developmentRuntimeDirectory(),
-    DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
-    DSH_DESKTOP_OPEN_DEVTOOLS: process.env.DSH_DESKTOP_OPEN_DEVTOOLS ?? '1',
-    ELECTRON_ENABLE_LOGGING: process.env.ELECTRON_ENABLE_LOGGING ?? '1',
+    ...(diagnostics ? { DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort) } : {}),
+    DSH_DESKTOP_OPEN_DEVTOOLS: process.env.DSH_DESKTOP_OPEN_DEVTOOLS ?? (diagnostics ? '1' : '0'),
+    ELECTRON_ENABLE_LOGGING: process.env.ELECTRON_ENABLE_LOGGING ?? (diagnostics ? '1' : '0'),
   }
   console.log(`desktop development: DSH_HOME=${home}`)
   console.log(`desktop development: userData=${userData}`)
-  console.log(`desktop development: inspectors main=${String(mainPort)}, renderer=${String(rendererPort)}, host=${String(hostPort)}`)
+  console.log(diagnostics
+    ? `desktop development: inspectors main=${String(mainPort)}, renderer=${String(rendererPort)}, host=${String(hostPort)}`
+    : 'desktop development: diagnostics off (pass --diagnostics for inspectors, DevTools, and Chromium logging)')
   if (process.platform === 'darwin') {
     const executable = prepareDevelopmentApp({ electron, appRoot: APP_ROOT, directory: DEVELOPMENT_ROOT, home, userData,
       mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS! })
@@ -83,9 +90,15 @@ async function launchElectron(): Promise<void> {
     return
   }
   await run(electron, [
-    `--inspect=127.0.0.1:${String(mainPort)}`,
-    `--remote-debugging-port=${String(rendererPort)}`,
+    ...(diagnostics ? [
+      `--inspect=127.0.0.1:${String(mainPort)}`,
+      `--remote-debugging-port=${String(rendererPort)}`,
+    ] : []),
     `--user-data-dir=${userData}`,
+    // Linux development only: Chromium's SUID sandbox helper must be root-owned mode 4755, which a
+    // checkout's pnpm store never is. Shipped targets are macOS and Windows, so no packaged launch
+    // takes this branch.
+    ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     APP_ROOT,
   ], APP_ROOT, environment)
 }
