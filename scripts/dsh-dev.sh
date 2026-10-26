@@ -119,6 +119,7 @@ Usage:
 Examples:
   dsh-dev install
   dsh-dev web                        boot web from this checkout
+  dsh-dev desktop                    launch the Electron Desktop shell (see dsh-desktop.sh)
   dsh-dev --profile headless "job"
   dsh-dev plugin --profile demo add ./hello-plugin
 
@@ -132,5 +133,8 @@ case "${1:-}" in
   status) print_status ;;
   help) usage ;;
   --dsh-dev-help) usage ;;
+  # Desktop is an Electron application rather than a CLI profile, so it has its own
+  # launcher; the shared DSH_HOME keeps sessions, settings, and skills identical.
+  desktop) shift; exec "$ROOT/scripts/dsh-desktop.sh" "$@" ;;
   *) run_dsh "$@" ;;
 esac

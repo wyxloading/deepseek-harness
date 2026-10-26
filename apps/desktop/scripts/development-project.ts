@@ -69,21 +69,34 @@ function linkDirectory(source: string, destination: string): void {
   symlinkSync(realpathSync(source), destination, process.platform === 'win32' ? 'junction' : 'dir')
 }
 
+/** The virtual store keeps links for other platforms and libc flavors; a dangling one has no target to mirror. */
+function resolvable(path: string): boolean {
+  try {
+    realpathSync(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
 function mirrorDependencyLinks(sourceRoot: string, destinationRoot: string): string[] {
   const names: string[] = []
   for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
     if (entry.name === '.bin') continue
     const source = join(sourceRoot, entry.name)
     if (entry.name.startsWith('@') && (entry.isDirectory() || entry.isSymbolicLink())) {
+      if (!resolvable(source)) continue
       mkdirSync(join(destinationRoot, entry.name), { recursive: true })
       for (const scoped of readdirSync(source, { withFileTypes: true })) {
         if (!scoped.isDirectory() && !scoped.isSymbolicLink()) continue
+        if (!resolvable(join(source, scoped.name))) continue
         linkDirectory(join(source, scoped.name), join(destinationRoot, entry.name, scoped.name))
         names.push(`${entry.name}/${scoped.name}`)
       }
       continue
     }
-    if (entry.isDirectory() || entry.isSymbolicLink()) {
+    if ((entry.isDirectory() || entry.isSymbolicLink()) && resolvable(source)) {
       linkDirectory(source, join(destinationRoot, entry.name))
       names.push(entry.name)
     }
@@ -159,6 +172,8 @@ export function prepareDevelopmentProject(options: DevelopmentProjectOptions): s
   removeOwnedPath(hostLink)
   linkDirectory(options.hostDir, hostLink)
   const sharedPackages = [...new Set([...names, '@deepseek-ai/dsh', '@deepseek-ai/dsh-desktop-host'])].flatMap((name) => {
+    // A workspace alias or generated directory can be linked without a manifest; it carries no record.
+    if (!existsSync(join(destinationModules, name, 'package.json'))) return []
     const manifest = readManifest(join(destinationModules, name, 'package.json'))
     return typeof manifest.version === 'string' ? [{ name, version: manifest.version, path: `node_modules/${name}` }] : []
   })
