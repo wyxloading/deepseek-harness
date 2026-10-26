@@ -901,6 +901,62 @@ describe('waitForExit', () => {
   })
 })
 
+describe.skipIf(process.platform === 'win32')('detached containment', () => {
+  /** Start a direct bash that leaves one same-group descendant behind and exits. */
+  function detachedWithSurvivor(label: string): { running: ReturnType<typeof spawnSubprocess>; helper: Promise<number> } {
+    const pidFile = join(spillDir, `detached-${label}-${String(Date.now())}.pid`)
+    const running = spawnSubprocess({
+      ...spec(`sleep 60 & echo $! > ${pidFile}`),
+      containment: 'detached',
+    })
+    return { running, helper: waitForPidFile(pidFile) }
+  }
+
+  async function killHelper(pid: number): Promise<void> {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // The helper already exited; teardown is best-effort in this suite.
+    }
+    await waitGone(pid)
+  }
+
+  it('owns only the direct process, so a group descendant survives terminate and the range wait', async () => {
+    const { running, helper } = detachedWithSurvivor('terminate')
+    const pid = await helper
+    try {
+      await expect(running.done).resolves.toMatchObject({ exitCode: 0 })
+      // The direct child is the whole range, so an empty range is proven while
+      // the descendant it left in the same process group still runs.
+      await expect(running.waitForExit()).resolves.toBe(true)
+      running.terminate()
+      expect(() => { process.kill(pid, 0) }).not.toThrow()
+    } finally {
+      await killHelper(pid)
+    }
+  })
+
+  it('does not reach descendants from host-exit termination', async () => {
+    const { running, helper } = detachedWithSurvivor('host-exit')
+    const pid = await helper
+    try {
+      await running.done
+      running.terminateForHostExit()
+      await running.waitForExit()
+      expect(() => { process.kill(pid, 0) }).not.toThrow()
+    } finally {
+      await killHelper(pid)
+    }
+  })
+
+  it('signals the direct process while it is still running', async () => {
+    const running = spawnSubprocess({ ...spec('exec sleep 60', { graceMs: 100 }), containment: 'detached' })
+    running.terminate()
+    await expect(running.done).resolves.toMatchObject({ exitCode: null, signal: 'SIGTERM' })
+    await expect(running.waitForExit()).resolves.toBe(true)
+  })
+})
+
 describe.skipIf(process.platform === 'win32')('synchronous host-exit termination', () => {
   it('force-kills the current process tree without waiting for the normal grace', async () => {
     const running = spawnSubprocess(spec('trap "" TERM; sleep 60', { graceMs: 60_000 }))

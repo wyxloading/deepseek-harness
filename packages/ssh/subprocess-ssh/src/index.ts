@@ -274,6 +274,9 @@ export class SshSubprocessRuntime extends SubprocessRuntime {
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     this.lifetime.signal.throwIfAborted()
     spec.signal?.throwIfAborted()
+    if (spec.containment === 'detached') {
+      throw new Error('subprocess-ssh: detached containment is not supported; the remote execution world owns the whole process range')
+    }
     const handle = new RemoteProcess(this.ctx.ssh, spec)
     this.live.add(handle)
     void handle.done.then(() => handle.waitForExit()).then(() => handle.streamsClosed)

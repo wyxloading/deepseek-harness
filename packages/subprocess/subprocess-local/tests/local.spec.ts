@@ -1166,6 +1166,50 @@ describe('LocalSubprocessRuntime', () => {
     }
   })
 
+  it('spawns a detached command past every native containment probe and range owner', async () => {
+    const probeLinuxNative = vi.fn(() => true)
+    const probeLinuxManager = vi.fn(() => true)
+    const launchLinuxScope = vi.fn()
+    const launchWindowsJob = vi.fn()
+    const probeWindowsJob = vi.fn(() => true)
+
+    vi.resetModules()
+    mockWin32ForIsolatedRuntime()
+    vi.doMock('../src/linux-scope.ts', () => ({
+      confirmLinuxManager: vi.fn(() => true),
+      LinuxScopeNotStartedError,
+      linuxManagerListener: vi.fn(() => undefined),
+      signalLinuxDirectProcess,
+      systemdRunIdentity: vi.fn(() => 'launcher'),
+      launchLinuxScope,
+      prepareLinuxTerminalScope: vi.fn(),
+      probeLinuxManager,
+      probeLinuxNative,
+    }))
+    vi.doMock('../src/windows-job.ts', () => ({ launchWindowsJob, probeWindowsJob }))
+    let fiber: { dispose(): Promise<void> } | undefined
+    try {
+      const { default: IsolatedLocalSubprocessRuntime } = await import('../src/index.ts')
+      const ctx = new Context()
+      fiber = await ctx.plugin(IsolatedLocalSubprocessRuntime)
+      const runtime = ctx.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>
+      runtime.internals = { platform: 'linux' }
+      const handle = runtime.spawn({ ...spec('true'), containment: 'detached' })
+      await handle.done
+      expect(probeLinuxNative).not.toHaveBeenCalled()
+      expect(probeLinuxManager).not.toHaveBeenCalled()
+      expect(launchLinuxScope).not.toHaveBeenCalled()
+      expect(launchWindowsJob).not.toHaveBeenCalled()
+      expect(probeWindowsJob).not.toHaveBeenCalled()
+    } finally {
+      await fiber?.dispose()
+      vi.doUnmock('../src/linux-scope.ts')
+      vi.doUnmock('../src/windows-job.ts')
+      unmockWin32ForIsolatedRuntime()
+      vi.resetModules()
+    }
+  })
+
   it('keeps a failed Linux native probe while no new user-manager listener appears and rechecks the Windows Job', async () => {
     const probeLinuxNative = vi.fn(() => undefined)
     const confirmLinuxManager = vi.fn(() => true)

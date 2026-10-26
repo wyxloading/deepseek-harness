@@ -82,6 +82,17 @@ export interface SubprocessSpawnSpec {
   /** Per-stream stdio dispositions. */
   stdio: SubprocessStdio
   /**
+   * Process-range policy for this spawn. `'managed'` (also the meaning when
+   * omitted) selects the provider's contained range, so descendants stay
+   * observable: {@link SubprocessHandle.terminate} signals them and
+   * {@link SubprocessHandle.waitForExit} does not resolve until that range is
+   * empty. `'detached'` starts the target outside any provider-owned range —
+   * only the direct process is observed or signalled — so descendants that
+   * escape it survive direct-command exit and the handle's own termination;
+   * the caller that opts in owns cleaning up those descendants.
+   */
+  containment?: 'managed' | 'detached' | undefined
+  /**
    * Positive finite grace period in milliseconds, no greater than
    * `MAX_TIMER_DELAY_MS`, available to the provider's termination procedure
    * and used for draining still-open collected pipes after the process exits

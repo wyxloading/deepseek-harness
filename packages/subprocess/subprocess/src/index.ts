@@ -108,6 +108,10 @@ declare module '@deepseek-ai/cordis' {
  *   provider documents its signalling and observability limits.
  * - Disposal of the service terminates all still-running managed processes
  *   and awaits their exit.
+ * - A spec with `containment: 'detached'` starts the target outside the
+ *   provider's managed range: `terminate()` and `waitForExit()` cover only the
+ *   direct process, and disposal does not reach descendants. The opt-in caller
+ *   owns cleaning them up.
  * - {@link spawnTerminal} owns terminal allocation, text transport,
  *   foreground groups, signalling, and whole-session quiescence behind one
  *   awaited termination method; readiness and persistent-shell policy stay
@@ -144,9 +148,10 @@ export abstract class SubprocessRuntime extends Service {
   abstract terminalEnvironment(signal?: AbortSignal): Promise<SubprocessTerminalEnvironment>
 
   /**
-   * Start one managed child process from a fully-specified spec; this seam
-   * applies no defaults.
-   * @param spec - argv, directory, stdio dispositions, grace, cancellation, and environment.
+   * Start one child process from a fully-specified spec; this seam applies no
+   * defaults. The spec's `containment` selects the range: the default managed
+   * range, or `'detached'` for a direct-process-only handle.
+   * @param spec - argv, directory, stdio dispositions, containment, grace, cancellation, and environment.
    * @returns the live process handle (streams/readers, signalling, outcome promise).
    * @throws synchronously when pre-aborted or when argv, cwd, environment, or grace is invalid before handle creation.
    */

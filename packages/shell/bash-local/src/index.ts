@@ -143,6 +143,9 @@ export class LocalBashExecutor extends ShellExecutor {
       // confines, so the field is inert here (the seam contract) — a
       // sandboxing subclass overrides resolve() to stamp its default instead.
       sandboxPolicy: request.sandboxPolicy,
+      // Detached containment is carried verbatim; absent keeps the provider's
+      // managed range.
+      ...request.detached === true ? { detached: true } : {},
     }
   }
 
@@ -166,6 +169,9 @@ export class LocalBashExecutor extends ShellExecutor {
       },
       graceMs: this.config.graceMs.get(),
       signal,
+      // Every spec is explicit: absent containment resolves to the provider's
+      // managed range here rather than inside the provider.
+      containment: spec.detached === true ? 'detached' : 'managed',
       // One explicit env map for the seam, layered so the trusted dshEnv
       // snapshot beats both the caller's env and the terminal overrides; the
       // subprocess service merges the whole map after its ambient scrub.
