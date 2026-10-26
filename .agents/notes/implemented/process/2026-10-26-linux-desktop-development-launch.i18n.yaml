@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-26-linux-desktop-development-launch.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-10-26-linux-desktop-development-launch.md
+/agent-note-linux-development-launch-for-the-desktop-shell:
+  en: f1e86675bce9f6bd
+  zh: 2affb23b368cdbf2
+/agent-note-linux-development-launch-for-the-desktop-shell/problem:
+  en: dbea53c30a5e4e59
+  zh: c178f83b723fd3bf
+/agent-note-linux-development-launch-for-the-desktop-shell/decision:
+  en: b8dc52f1b54ac4a2
+  zh: 09a3453935c0cf25
+/agent-note-linux-development-launch-for-the-desktop-shell/what-this-launch-does-not-cover:
+  en: 6ec9eb330e6c719a
+  zh: f4d846ae41cdfbaf
+/agent-note-linux-development-launch-for-the-desktop-shell/alternatives-considered:
+  en: 5cda6cb789a24226
+  zh: 7a0713650d86dbb7
+/agent-note-linux-development-launch-for-the-desktop-shell/consequences:
+  en: 27e3998bc48bb09c
+  zh: ce1c407d919939a4
