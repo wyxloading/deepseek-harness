@@ -27,7 +27,7 @@ On-demand observation connects the existing FS, Workspace file stream, Resource,
 - Files manages reads and watchers through a directory-node tree. Each open node loads and watches only its direct entries. The Client loads and subscribes to exactly the subtree levels it opens, without traversing unopened descendants.
 - Collapsing a directory releases that directory's watch and those of its hidden descendants. Reopening subscribes and reads again; the old cache is not treated as current.
 - Watches carry only metadata or invalidation. Contents still use the existing file readers; directory contents still use `list()`.
-- Local Chokidar watches use OS events, without polling the whole Workspace or recursively scanning all descendants by default.
+- Local watches use OS events, without polling the whole Workspace or recursively scanning all descendants by default. A file target subscribes to its parent directory through the native watcher and reports only its own entry ([native entry watch](../bug-fix/2026-10-15-native-entry-watch-for-file-targets.md)).
 - Both panels retain manual refresh and automatic-refresh functionality, but temporarily hide the automatic-refresh icon button. State and toggle logic remain; new Tabs default to enabled. Hiding the control does not stop observation or automatic refresh.
 
 Notifications invoke existing reload/list operations; a failed reload does not retain previous preview content. The following sections describe the implementation's responsibilities, data flow, and verification.
@@ -40,7 +40,7 @@ Notifications invoke existing reload/list operations; a failed reload does not r
 |---|---|---|
 | `FileSystem` | [fs/src/index.ts](../../../../packages/fs/fs/src/index.ts) | Declare single-target `watch(target, changed, signal)`: a file observes itself; a directory observes its direct entries. Resolve with an async close function once ready. The base implementation rejects `FS_IO_ERROR`, so a provider without watching states nothing and adds no FS error code |
 | `FsTarget` | [fs/src/types.ts](../../../../packages/fs/fs/src/types.ts) | Reuse the existing target type, without another FS watch-event system or upper-layer parsing of `targetKey` |
-| `LocalFileSystem` | [fs-local/src/index.ts](../../../../packages/fs/fs-local/src/index.ts) | Watches a file's parent with target-only filtering, or the directory itself for directory targets; awaits Chokidar readiness and closure; owns the Chokidar dependency |
+| `LocalFileSystem` | [fs-local/src/index.ts](../../../../packages/fs/fs-local/src/index.ts) | Subscribes to a file's existing parent with native entry filtering, falls back to a Chokidar parent watch when that parent does not exist, and watches the directory itself for directory targets; awaits Chokidar readiness where Chokidar is used and closure everywhere; owns both the native and Chokidar dependencies |
 | `SandboxedFileSystem` | [fs-sandbox/src/index.ts](../../../../packages/fs/fs-sandbox/src/index.ts) | Inherit local read-only observation without duplicating the watcher; retain its write and edit policy checks |
 | `SshFileSystem` | [fs-ssh/src/index.ts](../../../../packages/ssh/fs-ssh/src/index.ts) | Inherits the base `FS_IO_ERROR` rejection; the Host converts it to a `workspace-file/watch-unsupported` `RemoteError`, without importing or checking an `FsError` runtime class across packages or passing remote `processPath()` values to local Chokidar |
 | `WorkspaceFiles` | [workspace-files/src/index.ts](../../../../packages/api/workspace-files/src/index.ts) | Use `changes(scope, path, signal)` with only the target path. Host stat determines whether directory containment applies, including after type changes; ordinary files retain file-read authority |
@@ -98,7 +98,7 @@ Resource path, version, and size come from the same stat. Keep the existing smal
 - `FileSystem.watch()` accepts a target resolved by its provider; the FS provider owns the meaning of local or remote paths.
 - File watching retains file-read access rules. Existing previews may read some paths outside the Workspace through the selected FS; directory-tree containment must not be imposed on those files.
 - Directory watching retains `list()`'s Workspace scope and path checks, including after target type changes, without widening browsing authority.
-- File watching covers in-place writes, replacement by a temporary file, deletion, and recreation at the same path while the parent directory remains. The local provider watches that parent directly, filters entries and events to the target file, and waits for the parent watcher to be ready before reporting readiness, including when the file does not yet exist.
+- File watching covers in-place writes, replacement by a temporary file, deletion, and recreation at the same path while the parent directory remains. The local provider watches that parent directly and filters entries and events to the target file, reporting readiness once the native subscription is registered; when the parent directory does not exist yet, the Chokidar parent watch reports readiness after its initial scan, including when the file does not yet exist.
 - A directory watch observes itself and direct entries, without recursively opening unexpanded children. Creation, deletion, renaming, type changes, and visible metadata changes of direct entries invalidate that level.
 - Local watching uses OS events. Deployment controls such as write-stability time or event-coalescing windows, if needed, belong in their owner's configuration rather than scattered component constants.
 - OS watching drives UI refresh only. It does not fabricate an agent's authoritative `fs/observed` read observation or change the observed-version policy for editing.
@@ -113,11 +113,11 @@ Files.openResource / file.link
   → changes(sessionId, path)
   → WorkspaceFiles → FsTarget
   → WorkspaceChangeFeed → FileSystem.watch
-  → LocalFileSystem → Chokidar
+  → LocalFileSystem → native fs.watch (Chokidar while the parent is absent)
   → ready → Client.stat → ResourceSnapshot
 
 Editor / Shell / file tool → disk
-  → Chokidar → LocalFileSystem
+  → OS watch → LocalFileSystem
   → WorkspaceChangeFeed → FileSystem.stat
   → Remote.change
   → Client.stat → ResourceSnapshot

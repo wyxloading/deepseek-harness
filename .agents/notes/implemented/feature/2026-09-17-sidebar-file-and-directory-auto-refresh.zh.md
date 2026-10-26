@@ -27,7 +27,7 @@ Sidebar 的 Document Preview 和 Files 面板都需要反映磁盘上的最新�
 - Files 面板：以目录节点树管理读取和监听。每个已打开的目录节点只加载并监听自己的直接子项；Client 打开多少层子树，就逐层加载并订阅多少层，不提前遍历未打开的后代。
 - 折叠目录时释放该目录及其不可见后代的监听；再次展开时重新订阅并读取，不能把折叠前缓存当作最新结果。
 - 监听只传元数据或失效通知；正文仍走现有文件读取接口，目录内容仍走 `list()`。
-- 使用本地 Chokidar 系统监听，不定时轮询整个 Workspace，不默认递归扫描所有后代。
+- 使用本地 OS 事件监听，不定时轮询整个 Workspace，不默认递归扫描所有后代。文件目标通过原生 watcher 订阅其父目录并只上报自身条目（[原生条目监听](../bug-fix/2026-10-15-native-entry-watch-for-file-targets.zh.md)）。
 - 保留两个面板的手动刷新入口和自动刷新开关功能，但暂时隐藏开关的 icon 按钮。开关状态及切换逻辑不变，新 Tab 默认开启；隐藏入口不关闭监控或自动刷新。
 
 变化通知触发现有 reload／list；刷新失败后不保留旧预览内容。下面说明实现对象的职责、数据流及验证。
@@ -40,7 +40,7 @@ Sidebar 的 Document Preview 和 Files 面板都需要反映磁盘上的最新�
 |---|---|---|
 | `FileSystem` | [fs/src/index.ts](../../../../packages/fs/fs/src/index.ts) | 声明单目标 `watch(target, changed, signal)` 方法；文件观察自身，目录观察直接子项；就绪后返回异步关闭函数，基类以 `FS_IO_ERROR` 拒绝，不支持监听的提供方无需覆写，也不新增 FS 错误码 |
 | `FsTarget` | [fs/src/types.ts](../../../../packages/fs/fs/src/types.ts) | 沿用现有目标类型，不单独增加 FS 监听事件体系，也不让上层解析 `targetKey` |
-| `LocalFileSystem` | [fs-local/src/index.ts](../../../../packages/fs/fs-local/src/index.ts) | 文件监听其父目录并过滤到目标，目录监听自身；等待 Chokidar 就绪和关闭；依赖声明在 `fs-local` |
+| `LocalFileSystem` | [fs-local/src/index.ts](../../../../packages/fs/fs-local/src/index.ts) | 文件目标在其父目录已存在时以原生条目过滤订阅父目录，父目录不存在时回退到 Chokidar 父目录监听，目录目标监听自身；使用 Chokidar 时等待其就绪，各处都等待关闭；两类依赖都声明在 `fs-local` |
 | `SandboxedFileSystem` | [fs-sandbox/src/index.ts](../../../../packages/fs/fs-sandbox/src/index.ts) | 继承本地只读监听能力，不复制 watcher 实现；保留自身对写入、编辑的策略检查 |
 | `SshFileSystem` | [fs-ssh/src/index.ts](../../../../packages/ssh/fs-ssh/src/index.ts) | 继承基类的 `FS_IO_ERROR` 拒绝；Host 将其转换为 `workspace-file/watch-unsupported` 的 `RemoteError`，不跨包导入或判断 `FsError` 实体，也不把远端 `processPath()` 传给本机 Chokidar |
 | `WorkspaceFiles` | [workspace-files/src/index.ts](../../../../packages/api/workspace-files/src/index.ts) | 使用仅携带目标路径的 `changes(scope, path, signal)`；Host stat 决定是否执行目录包含检查，目标类型变化后也检查，普通文件沿用文件读取权限 |
@@ -98,7 +98,7 @@ Resource 发布的路径、版本和大小来自同一次 stat。先沿用现有
 - `FileSystem.watch()` 接受本提供方解析出的目标；本机或远端路径的含义由 FS 提供方负责。
 - 文件监听保持文件读取的访问规则。现有预览允许通过所选 FS 读取部分 Workspace 外的路径，不能把目录树的范围限制顺手强加给这些文件。
 - 目录监听保持 `list()` 的 Workspace 范围及路径检查，目标类型变化后也执行检查，不因新增 watch 扩大目录浏览权限。
-- 父目录保持存在时，文件监听覆盖原地写入、临时文件替换、删除和同一路径重建。本地提供方直接监听父目录，将条目和事件过滤到目标文件，等待父目录 watcher 就绪后才报告就绪，目标文件尚不存在时也适用。
+- 父目录保持存在时，文件监听覆盖原地写入、临时文件替换、删除和同一路径重建。本地提供方直接监听父目录，将条目和事件过滤到目标文件，原生订阅注册完成即报告就绪；父目录尚不存在时改用 Chokidar 父目录监听，在其初次扫描后报告就绪，目标文件尚不存在时也适用。
 - 目录监听只关注该目录自身和直接子项，不递归打开尚未展开的子目录；直接子项的创建、删除、重命名、类型或可见元数据变化都使这一层失效。
 - 本地实现采用系统事件模式；若需要调整写入稳定时间、事件合并窗口等部署参数，应由拥有它们的配置声明，不散落在组件里。
 - 系统 watch 只驱动 UI 刷新，不把外部磁盘变化伪装成某个 agent 已读取文件的 `fs/observed`，不改变文件编辑的已观察版本策略。
@@ -113,11 +113,11 @@ Files.openResource / file.link
   → changes(sessionId, path)
   → WorkspaceFiles → FsTarget
   → WorkspaceChangeFeed → FileSystem.watch
-  → LocalFileSystem → Chokidar
+  → LocalFileSystem → native fs.watch (Chokidar while the parent is absent)
   → ready → Client.stat → ResourceSnapshot
 
 Editor / Shell / file tool → disk
-  → Chokidar → LocalFileSystem
+  → OS watch → LocalFileSystem
   → WorkspaceChangeFeed → FileSystem.stat
   → Remote.change
   → Client.stat → ResourceSnapshot

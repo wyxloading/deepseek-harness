@@ -9,14 +9,14 @@
   en: f7e7751fe98be91e
   zh: e1d6c4f042c7d75d
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/decision:
-  en: b51a6972761816ef
-  zh: 6f50b2a09b8d6abc
+  en: 1c3c1cda79b3bf72
+  zh: 76d7cb97bd9d60df
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/implementation-and-responsibilities:
   en: 79480338424c1829
   zh: c32ff30ccf3d9b87
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/implementation-and-responsibilities/fs-and-host:
-  en: ca63fb903b447c2d
-  zh: 3014adbdb0a890ee
+  en: fa8d17c6665e6fcd
+  zh: 131bb6914730e9d9
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/implementation-and-responsibilities/client-and-sidebar:
   en: 5cb8326d8a5b0407
   zh: a31173f990276856
@@ -27,8 +27,8 @@
   en: 75d1c4e35d0f4d74
   zh: a6b11f70a64d6922
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/watch-requests-and-notifications/os-watching-and-access-scope:
-  en: 48af866f541caf04
-  zh: c3df4edf7f7ddb4a
+  en: 88452f36844aa82f
+  zh: 2fe096d69c05f4c1
 /agent-note-on-demand-watching-and-automatic-refresh-for-sidebar-previews-and-file-trees/complete-file-preview-data-flow:
   en: f8468653186b2a60
   zh: 0c624d957c9ce332

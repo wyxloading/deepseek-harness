@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-15-native-entry-watch-for-file-targets.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-15-native-entry-watch-for-file-targets.md
+/agent-note-a-file-target-watches-its-parent-entry-natively:
+  en: b345ad3bd72cd5c1
+  zh: 11f4174b8a7fda00
+/agent-note-a-file-target-watches-its-parent-entry-natively/problem:
+  en: 86dd70cb503cea83
+  zh: 3906baf74c28d0ee
+/agent-note-a-file-target-watches-its-parent-entry-natively/decision:
+  en: 8255622c74fd9ca2
+  zh: 3c5888714fbfe7cf
+/agent-note-a-file-target-watches-its-parent-entry-natively/alternatives-considered:
+  en: 6aebf80459d17a14
+  zh: e8f6dceeacf230bd
+/agent-note-a-file-target-watches-its-parent-entry-natively/consequences:
+  en: 4a1f32f36eb7ad06
+  zh: 2f67679cc9023bfe
+/agent-note-a-file-target-watches-its-parent-entry-natively/testing:
+  en: fdac4813fc8e1335
+  zh: bfa947f9e494eda9

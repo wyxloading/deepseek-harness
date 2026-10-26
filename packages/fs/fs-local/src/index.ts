@@ -7,8 +7,9 @@
 import { Context } from '@deepseek-ai/cordis'
 import { constants as bufferConstants } from 'node:buffer'
 import { once } from 'node:events'
+import { watch as watchFs } from 'node:fs'
 import { watch } from 'chokidar'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import z from '@deepseek-ai/schemastery'
 import { FileSystem, FsError, FsVersion } from '@deepseek-ai/dsh-fs'
@@ -72,7 +73,17 @@ export class LocalFileSystem extends FileSystem {
     const path = resolve(this.processPath(target))
     const directory = (await this.stat(target, signal))?.type === 'directory'
     signal.throwIfAborted()
-    const root = directory ? path : dirname(path)
+    const parent = dirname(path)
+    // A file target is one directory entry, and the native watcher names the
+    // entry that changed. Chokidar rescans the parent instead: its internal
+    // ReaddirpStream stats every sibling on each change, so one watched file in
+    // a large directory such as /tmp costs seconds of CPU per event. A parent
+    // that is not a directory yet keeps Chokidar, which waits for it to appear.
+    if (!directory && (await probe(parent))?.type === 'directory') {
+      signal.throwIfAborted()
+      return watchFileEntry(parent, basename(path), changed)
+    }
+    const root = directory ? path : parent
     const watcher = watch(root, {
       ignoreInitial: true, depth: 0,
       ignored: entry => !directory && resolve(entry) !== root && resolve(entry) !== path,
@@ -296,6 +307,30 @@ export class LocalFileSystem extends FileSystem {
   private versionAfterWrite(after: { version: FsVersion } | null, target: FsTarget): FsVersion {
     if (after) return after.version
     return FsVersion(`missing:${target.targetKey}`)
+  }
+}
+
+/**
+ * Watch one directory entry through the native subscription, which reports the
+ * changed name instead of re-reading the directory.
+ * @param directory - existing parent directory to watch.
+ * @param name - the single entry name whose changes are reported.
+ * @param changed - receives one target change, or a watcher error.
+ * @returns the disposer that closes the subscription.
+ */
+function watchFileEntry(
+  directory: string,
+  name: string,
+  changed: (error?: Error) => void,
+): () => Promise<void> {
+  const watcher = watchFs(directory, { persistent: true }, (_event, filename) => {
+    // Some platforms omit the name; an unnamed event may be the watched entry.
+    if (filename === null || filename === name) changed()
+  })
+  watcher.on('error', (error) => { changed(error instanceof Error ? error : new Error(String(error))) })
+  return () => {
+    watcher.close()
+    return Promise.resolve()
   }
 }
 
