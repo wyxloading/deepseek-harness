@@ -1,7 +1,11 @@
-/** Watch initialization and asynchronous release at the Chokidar adapter. */
+/** Watch initialization, native entry filtering, and release at both adapters. */
 import { Context } from '@deepseek-ai/cordis'
 import { FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
-import { dirname, join, resolve } from 'node:path'
+import { EventEmitter } from 'node:events'
+import * as nodeFs from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 import * as chokidar from 'chokidar'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { LocalFileSystem } from '../src/index.ts'
@@ -11,9 +15,29 @@ vi.mock('chokidar', async (importOriginal) => {
   return { ...original, watch: vi.fn(original.watch) }
 })
 
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>()
+  return { ...original, watch: vi.fn(original.watch) }
+})
+
 afterEach(() => { vi.restoreAllMocks() })
 
-async function setup(kind: 'file' | 'directory' | 'missing' = 'file') {
+/** Narrow a recorded argument to the entry listener the native watcher receives. */
+function isEntryListener(value: unknown): value is nodeFs.WatchListener<string> {
+  return typeof value === 'function'
+}
+
+/** Stand-in for the native watcher, whose interface exposes close, ref, and unref. */
+class NativeWatchDouble extends EventEmitter {
+  close(): void {}
+  ref(): this { return this }
+  unref(): this { return this }
+}
+
+async function setup(
+  kind: 'file' | 'directory' | 'missing' = 'file',
+  parent: 'present' | 'absent' = 'present',
+) {
   const watcher = new chokidar.FSWatcher()
   onTestFinished(() => watcher.close())
   const started = Promise.withResolvers<undefined>()
@@ -21,24 +45,62 @@ async function setup(kind: 'file' | 'directory' | 'missing' = 'file') {
     started.resolve(undefined)
     return watcher
   })
+  const native = new NativeWatchDouble()
+  // node:fs.watch is overloaded, so its mock calls tuple describes the two-argument
+  // form; record the entry listener where the three-argument call actually delivers it.
+  const entryListeners: nodeFs.WatchListener<string>[] = []
+  const nativeWatch = vi.mocked(nodeFs.watch).mockReset().mockImplementation((...call: unknown[]) => {
+    const listener = call[2]
+    if (isEntryListener(listener)) entryListeners.push(listener)
+    return native
+  })
+  const root = await mkdtemp(join(tmpdir(), 'dsh-fs-watch-'))
+  onTestFinished(() => rm(root, { recursive: true, force: true }))
+  const path = resolve(parent === 'present' ? join(root, 'file.txt') : join(root, 'missing-dir', 'file.txt'))
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
   await ctx.plugin(LocalFileSystem)
-  const path = resolve('/workspace/file.txt')
   const target = { targetKey: FsTargetKey(path), displayPath: 'file.txt' }
   const stat = vi.spyOn(ctx.fs, 'stat').mockResolvedValue(kind === 'missing'
     ? undefined : { type: kind, version: FsVersion('v1'), size: 1 })
   const changed = vi.fn<(error?: Error) => void>()
   const controller = new AbortController()
   onTestFinished(() => { controller.abort() })
-  return { watcher, watch, fs: ctx.fs, target, changed, controller, path, stat, started: started.promise }
+  return {
+    watcher, watch, native, nativeWatch, entryListeners, fs: ctx.fs,
+    target, changed, controller, path, stat, started: started.promise,
+  }
 }
 
 describe('local filesystem watch', () => {
-  it.each(['file', 'missing'] as const)('waits for the parent watch of a %s target and awaits closure', async (kind) => {
+  it.each(['file', 'missing'] as const)('watches a %s target through one native entry subscription', async (kind) => {
     const h = await setup(kind)
+    const close = await h.fs.watch(h.target, h.changed, h.controller.signal)
+    expect(h.watch).not.toHaveBeenCalled()
+    const listener = h.entryListeners[0]!
+    expect(h.nativeWatch).toHaveBeenCalledExactlyOnceWith(dirname(h.path), { persistent: true }, listener)
+    listener('change', basename(h.path))
+    expect(h.changed).toHaveBeenCalledExactlyOnceWith()
+    listener('change', 'unrelated.txt')
+    expect(h.changed).toHaveBeenCalledExactlyOnceWith()
+    // A platform that omits the changed name may mean the watched entry.
+    listener('change', null)
+    expect(h.changed).toHaveBeenCalledTimes(2)
+    const error = new Error('watch failed')
+    h.native.emit('error', error)
+    // EventEmitter callbacks can receive non-Error values from the external watcher.
+    h.native.emit('error', 'watch unavailable')
+    expect(h.changed.mock.calls).toEqual([[], [], [error], [new Error('watch unavailable')]])
+    const closed = vi.spyOn(h.native, 'close')
+    await close()
+    expect(closed).toHaveBeenCalledOnce()
+  })
+
+  it.each(['file', 'missing'] as const)('waits for the parent watch of a %s target whose parent directory is absent', async (kind) => {
+    const h = await setup(kind, 'absent')
     const pending = h.fs.watch(h.target, h.changed, h.controller.signal)
     await h.started
+    expect(h.nativeWatch).not.toHaveBeenCalled()
     const ignored = h.watch.mock.calls[0]![1]!.ignored
     if (typeof ignored !== 'function') throw new Error('Expected a target filter')
     expect(h.watch).toHaveBeenCalledExactlyOnceWith(dirname(h.path), { ignoreInitial: true, depth: 0, ignored })
@@ -95,6 +157,7 @@ describe('local filesystem watch', () => {
     metadata.resolve(undefined)
     await rejected
     expect(h.watch).not.toHaveBeenCalled()
+    expect(h.nativeWatch).not.toHaveBeenCalled()
   })
 
   it('rejects an already-cancelled initialization without acquiring a watcher', async () => {
@@ -102,10 +165,11 @@ describe('local filesystem watch', () => {
     h.controller.abort()
     await expect(h.fs.watch(h.target, h.changed, h.controller.signal)).rejects.toThrow()
     expect(h.watch).not.toHaveBeenCalled()
+    expect(h.nativeWatch).not.toHaveBeenCalled()
   })
 
   it('closes the acquired watcher when initialization is cancelled', async () => {
-    const h = await setup()
+    const h = await setup('file', 'absent')
     const pending = h.fs.watch(h.target, h.changed, h.controller.signal)
     const rejected = expect(pending).rejects.toThrow()
     await h.started
@@ -116,7 +180,7 @@ describe('local filesystem watch', () => {
   })
 
   it('reports initialization errors and closes before rejecting', async () => {
-    const h = await setup()
+    const h = await setup('file', 'absent')
     const error = new Error('watch failed')
     const pending = h.fs.watch(h.target, h.changed, h.controller.signal)
     const rejected = expect(pending).rejects.toBe(error)
@@ -128,7 +192,7 @@ describe('local filesystem watch', () => {
   })
 
   it('normalizes watcher errors after initialization', async () => {
-    const h = await setup()
+    const h = await setup('file', 'absent')
     const pending = h.fs.watch(h.target, h.changed, h.controller.signal)
     await h.started
     h.watcher.emit('ready')
