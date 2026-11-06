@@ -47,4 +47,6 @@ export type { ListingSettings, ListingTiming, ModelListingConfig, ModelListingOp
 export { ModelListingCache } from './listing-cache.ts'
 export type { ListingCacheDependencies, ListingView } from './listing-cache.ts'
 export { refuseListedModel, resolveListedCatalog } from './listed-catalog.ts'
+export { discoverDeepSeekModels, readModelListing } from './discovery.ts'
+export type { DeepSeekDiscoverySource } from './discovery.ts'
 export type { CatalogRefusal, ListedCatalog, ListedCatalogInput, ModelOverride } from './listed-catalog.ts'
